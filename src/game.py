@@ -201,7 +201,7 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
     # Title bar
     buf.append(
         bg(18, 18, 28) + fg(120, 170, 210) + ' ' + DIAM + ' '
-        + fg(200, 200, 210) + bold() + 'STONE DUNGEON' + rst()
+        + fg(200, 200, 210) + bold() + 'SIMPLE CAVE ROGUELIKE' + rst()
         + bg(18, 18, 28)
         + f'  {fg(220, 190, 80)}Floor {floor_num}{rst()}'
         + f'  {fg(140, 140, 160)}Lv.{player.level}{rst()}'

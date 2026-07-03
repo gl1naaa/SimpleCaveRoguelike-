@@ -1,5 +1,5 @@
 @echo off
-title Stone Dungeon
+title Simple Cave Roguelike
 chcp 65001 >nul
 
 :: Maximize window on start

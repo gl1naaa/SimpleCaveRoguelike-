@@ -1,5 +1,5 @@
 # ============================================================
-#  Stone Dungeon v2 — Configuration
+#  Simple Cave Roguelike — Configuration
 # ============================================================
 
 # --- Display ---
