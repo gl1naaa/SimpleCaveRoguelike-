@@ -1,0 +1,966 @@
+{
+  "_comment": "Simple Cave Roguelike — Full Configuration",
+  "display": {
+    "screen_width": 120,
+    "screen_height": 40,
+    "viewport_w": 80,
+    "viewport_h": 22,
+    "fps": 120,
+    "font_name": "Consolas",
+    "font_size": 28,
+    "font_weight": 400
+  },
+  "map": {
+    "width": 80,
+    "height": 50,
+    "room_min": 5,
+    "room_max": 12,
+    "connect_chance": 0.2,
+    "bsp_room_chance": 0.8,
+    "corridor_width": 3,
+    "extra_corridors_divisor": 3
+  },
+  "player": {
+    "char": "@",
+    "max_hp": 100,
+    "max_mp": 50,
+    "base_atk": 10,
+    "base_def": 5,
+    "base_speed": 150,
+    "move_delay": 0.12,
+    "skill_cooldown": 100,
+    "xp_base": 40,
+    "xp_exponent": 1.4,
+    "dodge_cap": 0.4,
+    "level_up_primary": 3,
+    "level_up_secondary": 1
+  },
+  "combat": {
+    "crit_multiplier": 2.0,
+    "damage_variance": 0.25,
+    "basic_atk_cooldown_swordsman": 0.35,
+    "basic_atk_cooldown_rogue": 0.45,
+    "basic_atk_cooldown_others": 0.5,
+    "auto_range_archer": 4,
+    "auto_range_melee": 1,
+    "swordsman_atk_bonus": 1.2,
+    "skill_miss_base": 0.1,
+    "skill_miss_per_level": 0.008,
+    "skill_miss_min": 0.02,
+    "monster_gold_min": 5,
+    "monster_gold_max_base": 15,
+    "monster_gold_floor_mult": 3,
+    "boss_gold_base": 50,
+    "boss_gold_floor_mult": 20,
+    "trap_damage_min": 5,
+    "trap_damage_max": 15,
+    "event_heal_amount": 20,
+    "archer_projectile_speed": 14.0,
+    "blink_distance": 5
+  },
+  "movement": {
+    "move_cooldown": 150,
+    "skill_cooldown": 300,
+    "monster_tick": 180
+  },
+  "inventory": {
+    "size": 20,
+    "cols": 6,
+    "rows": 5
+  },
+  "skills": {
+    "keys": [
+      "z",
+      "x",
+      "c",
+      "v",
+      "b"
+    ],
+    "num_slots": 5
+  },
+  "rarity": {
+    "order": [
+      "common",
+      "uncommon",
+      "rare",
+      "epic",
+      "mythic",
+      "legendary",
+      "unique"
+    ],
+    "weights": {
+      "common": 30,
+      "uncommon": 25,
+      "rare": 22,
+      "epic": 14,
+      "mythic": 5,
+      "legendary": 2.0,
+      "unique": 0.5
+    },
+    "stat_mult": {
+      "common": 1.0,
+      "uncommon": 1.3,
+      "rare": 1.7,
+      "epic": 2.2,
+      "mythic": 3.0,
+      "legendary": 4.0,
+      "unique": 1.0
+    },
+    "colors": {
+      "common": [
+        170,
+        170,
+        170
+      ],
+      "uncommon": [
+        80,
+        200,
+        80
+      ],
+      "rare": [
+        80,
+        130,
+        255
+      ],
+      "epic": [
+        180,
+        80,
+        255
+      ],
+      "mythic": [
+        255,
+        60,
+        60
+      ],
+      "legendary": [
+        255,
+        255,
+        60
+      ],
+      "unique": "rainbow"
+    }
+  },
+  "weapons": {
+    "sword": {
+      "atk_base": 5,
+      "atk_range": 4,
+      "class_req": "swordsman"
+    },
+    "bow": {
+      "atk_base": 4,
+      "atk_range": 5,
+      "class_req": "archer"
+    },
+    "staff": {
+      "atk_base": 3,
+      "atk_range": 3,
+      "class_req": "mage"
+    },
+    "orb": {
+      "atk_base": 2,
+      "atk_range": 4,
+      "class_req": "summoner"
+    },
+    "mace": {
+      "atk_base": 4,
+      "atk_range": 3,
+      "class_req": "healer"
+    },
+    "dagger": {
+      "atk_base": 5,
+      "atk_range": 4,
+      "class_req": "rogue"
+    }
+  },
+  "armor": {
+    "light": {
+      "def_base": 2,
+      "def_range": 3
+    },
+    "medium": {
+      "def_base": 4,
+      "def_range": 4
+    },
+    "heavy": {
+      "def_base": 7,
+      "def_range": 5
+    }
+  },
+  "helmet_types": {
+    "leather_helm": {
+      "def_base": 1,
+      "def_range": 2,
+      "hp": 5
+    },
+    "chain_helm": {
+      "def_base": 2,
+      "def_range": 3,
+      "hp": 8
+    },
+    "plate_helm": {
+      "def_base": 3,
+      "def_range": 4,
+      "hp": 12
+    }
+  },
+  "chest_types": {
+    "leather_chest": {
+      "def_base": 2,
+      "def_range": 3,
+      "hp": 8
+    },
+    "chain_chest": {
+      "def_base": 4,
+      "def_range": 4,
+      "hp": 12
+    },
+    "plate_chest": {
+      "def_base": 6,
+      "def_range": 5,
+      "hp": 18
+    }
+  },
+  "legs_types": {
+    "leather_legs": {
+      "def_base": 1,
+      "def_range": 2,
+      "agi": 1
+    },
+    "chain_legs": {
+      "def_base": 2,
+      "def_range": 3,
+      "agi": 1
+    },
+    "plate_legs": {
+      "def_base": 3,
+      "def_range": 4,
+      "agi": 0
+    }
+  },
+  "boots_types": {
+    "leather_boots": {
+      "def_base": 1,
+      "def_range": 1,
+      "speed": 8
+    },
+    "chain_boots": {
+      "def_base": 1,
+      "def_range": 2,
+      "speed": 4
+    },
+    "plate_boots": {
+      "def_base": 2,
+      "def_range": 3,
+      "speed": 0
+    }
+  },
+  "gloves_types": {
+    "leather_gloves": {
+      "def_base": 0,
+      "def_range": 1,
+      "atk": 2
+    },
+    "chain_gloves": {
+      "def_base": 1,
+      "def_range": 2,
+      "atk": 3
+    },
+    "plate_gloves": {
+      "def_base": 2,
+      "def_range": 2,
+      "atk": 4
+    }
+  },
+  "necklace_types": {
+    "crystal": {
+      "mp": 10,
+      "int": 2
+    },
+    "ruby": {
+      "hp": 15,
+      "str": 2
+    },
+    "sapphire": {
+      "mp": 18,
+      "int": 3
+    },
+    "emerald": {
+      "hp": 10,
+      "agi": 2
+    }
+  },
+  "cape_types": {
+    "cloth": {
+      "speed": 5,
+      "agi": 1
+    },
+    "fur": {
+      "hp": 10,
+      "def": 1
+    },
+    "shadow": {
+      "speed": 10,
+      "crit": 2
+    },
+    "arcane": {
+      "mp": 12,
+      "int": 2
+    }
+  },
+  "rooms": {
+    "weights": {
+      "normal": 55,
+      "treasure": 18,
+      "boss": 12,
+      "trap": 10,
+      "event": 5
+    }
+  },
+  "monster_scaling": {
+    "hp_scale": 12,
+    "atk_scale": 2.5,
+    "def_scale": 0.5,
+    "base_per_floor": 6,
+    "scale_per_floor": 2
+  },
+  "monster_unlocks": {
+    "orc_floor": 3,
+    "wraith_floor": 3,
+    "demon_floor": 5,
+    "dragon_floor": 7,
+    "ranged_floor": 2
+  },
+  "monsters_per_room": {
+    "min": 2,
+    "max_formula": "1 + floor"
+  },
+  "traps_per_room": {
+    "min": 1,
+    "max": 3
+  },
+  "extra_chests_per_floor": {
+    "min": 0,
+    "max": 2
+  },
+  "npc_enemies": {
+    "chance": 0.3,
+    "min_floor": 2,
+    "per_room_max": 1,
+    "classes": [
+      "swordsman",
+      "archer",
+      "mage",
+      "healer",
+      "rogue"
+    ],
+    "class_weights": [
+      25,
+      25,
+      20,
+      15,
+      15
+    ]
+  },
+  "npc_ai": {
+    "flee_hp": 0.3,
+    "kite_range": 3,
+    "heal_hp": 0.5,
+    "heal_range": 6,
+    "heal_cooldown": 2.0,
+    "flank_chance": 0.6,
+    "bfs_depth": 15,
+    "update_interval": 0.3
+  },
+  "party": {
+    "max_size": 5,
+    "max_infinite_skeletons": 3,
+    "ally_focus_range": 3,
+    "ally_leash_range": 10,
+    "ally_follow_distance": 2
+  },
+  "fov": {
+    "radius": 10,
+    "ray_count": 720,
+    "min_brightness": 0.05
+  },
+  "chest_loot": {
+    "min_items": 1,
+    "max_items": 3,
+    "gold_min": 10,
+    "gold_max": 50,
+    "gold_floor_divisor": 3
+  },
+  "unique_items": {
+    "drop_chance": 0.005
+  },
+  "consumable_value": {
+    "base": 15,
+    "floor_mult": 3
+  },
+  "item_type_weights": {
+    "weapon": 0.2,
+    "chest": 0.1,
+    "helmet": 0.07,
+    "legs": 0.07,
+    "boots": 0.07,
+    "gloves": 0.07,
+    "necklace": 0.07,
+    "ring": 0.1,
+    "cape": 0.07,
+    "consumable": 0.18
+  },
+  "class_weapon_affinity": 0.65,
+  "city": {
+    "base_price": 50,
+    "price_floor_mult": 20,
+    "price_index_mult": 10,
+    "width": 60,
+    "height": 40,
+    "items_per_shop": 3,
+    "pillar_positions_x": [
+      15,
+      30,
+      45
+    ],
+    "pillar_positions_y": [
+      10,
+      20,
+      30
+    ]
+  },
+  "gameplay": {
+    "total_floors": 10,
+    "victory_floor": 10
+  },
+  "colors": {
+    "hud_bg": [
+      18,
+      18,
+      28
+    ],
+    "hud_fg": [
+      180,
+      180,
+      200
+    ],
+    "player": [
+      80,
+      220,
+      255
+    ],
+    "wall": [
+      90,
+      80,
+      100
+    ],
+    "floor": [
+      50,
+      48,
+      55
+    ],
+    "fog_wall": [
+      42,
+      40,
+      50
+    ],
+    "fog_floor": [
+      28,
+      26,
+      32
+    ],
+    "stair": [
+      230,
+      200,
+      80
+    ],
+    "chest": [
+      200,
+      170,
+      60
+    ],
+    "monster": [
+      220,
+      70,
+      70
+    ],
+    "boss": [
+      200,
+      40,
+      200
+    ],
+    "trap": [
+      200,
+      120,
+      40
+    ],
+    "shop": [
+      80,
+      200,
+      120
+    ]
+  },
+  "display_symbols": {
+    "stairs_down": ">",
+    "chest": "=",
+    "trap": "^",
+    "shop": "$",
+    "altar": "*"
+  },
+  "player_classes": {
+    "swordsman": {
+      "weapon": "sword",
+      "desc": "Melee tank, high STR and HP",
+      "base_str": 12,
+      "base_agi": 8,
+      "base_int": 6,
+      "base_hp": 18
+    },
+    "archer": {
+      "weapon": "bow",
+      "desc": "Ranged DPS, high AGI and crits",
+      "base_str": 8,
+      "base_agi": 12,
+      "base_int": 6,
+      "base_hp": 12
+    },
+    "mage": {
+      "weapon": "staff",
+      "desc": "Glass cannon, high INT and spells",
+      "base_str": 6,
+      "base_agi": 8,
+      "base_int": 12,
+      "base_hp": 10
+    },
+    "summoner": {
+      "weapon": "orb",
+      "desc": "Universal, all stats scale allies",
+      "base_str": 6,
+      "base_agi": 8,
+      "base_int": 12,
+      "base_hp": 14
+    },
+    "healer": {
+      "weapon": "mace",
+      "desc": "Support, heals allies, buffs, restores MP",
+      "base_str": 6,
+      "base_agi": 6,
+      "base_int": 14,
+      "base_hp": 12
+    },
+    "rogue": {
+      "weapon": "dagger",
+      "desc": "Melee DPS, high crits, poison, evasion",
+      "base_str": 7,
+      "base_agi": 15,
+      "base_int": 5,
+      "base_hp": 11
+    }
+  },
+  "skills_data": {
+    "sword_0": {
+      "name": "Cleave",
+      "desc": "Wide slash hitting 3 enemies in front",
+      "cooldown": 0.4,
+      "mana": 8,
+      "damage": 20,
+      "range": 1,
+      "aoe": 3,
+      "effect": "",
+      "effect_duration": 0,
+      "effect_power": 0
+    },
+    "sword_1": {
+      "name": "Whirlwind",
+      "desc": "Spin attack, hits all enemies in 3x3",
+      "cooldown": 1.2,
+      "mana": 14,
+      "damage": 14,
+      "range": 1,
+      "aoe": 1,
+      "effect": "",
+      "effect_duration": 0,
+      "effect_power": 0
+    },
+    "sword_2": {
+      "name": "Shield Bash",
+      "desc": "Bash enemy, stun 1.5s + knockback",
+      "cooldown": 2.0,
+      "mana": 12,
+      "damage": 8,
+      "range": 1,
+      "aoe": 0,
+      "effect": "stun",
+      "effect_duration": 1.5,
+      "effect_power": 0
+    },
+    "sword_3": {
+      "name": "War Cry",
+      "desc": "Heal 20% HP, gain 30% ATK for 4s",
+      "cooldown": 6.0,
+      "mana": 18,
+      "damage": 0,
+      "range": 0,
+      "aoe": 0,
+      "effect": "heal",
+      "effect_duration": 4.0,
+      "effect_power": 20
+    },
+    "sword_4": {
+      "name": "Berserk",
+      "desc": "+80% ATK, +50% speed, -20% DEF for 6s",
+      "cooldown": 10.0,
+      "mana": 28,
+      "damage": 0,
+      "range": 0,
+      "aoe": 0,
+      "effect": "buff",
+      "effect_duration": 6.0,
+      "effect_power": 80
+    },
+    "archer_0": {
+      "name": "Quick Shot",
+      "desc": "Fast arrow, low cooldown",
+      "cooldown": 0.5,
+      "mana": 5,
+      "damage": 9,
+      "range": 8,
+      "aoe": 0,
+      "effect": "",
+      "effect_duration": 0,
+      "effect_power": 0
+    },
+    "archer_1": {
+      "name": "Volley",
+      "desc": "3 arrows in a spread",
+      "cooldown": 1.0,
+      "mana": 12,
+      "damage": 10,
+      "range": 5,
+      "aoe": 3,
+      "effect": "",
+      "effect_duration": 0,
+      "effect_power": 0
+    },
+    "archer_2": {
+      "name": "Poison Arrow",
+      "desc": "Poison DOT for 4s, -3 dmg/tick",
+      "cooldown": 2.5,
+      "mana": 10,
+      "damage": 10,
+      "range": 6,
+      "aoe": 0,
+      "effect": "burn",
+      "effect_duration": 4.0,
+      "effect_power": 3
+    },
+    "archer_3": {
+      "name": "Frost Arrow",
+      "desc": "Slow enemy 60% for 3s",
+      "cooldown": 3.0,
+      "mana": 8,
+      "damage": 10,
+      "range": 6,
+      "aoe": 0,
+      "effect": "slow",
+      "effect_duration": 3.0,
+      "effect_power": 60
+    },
+    "archer_4": {
+      "name": "Arrow Rain",
+      "desc": "Massive 5x5 AoE barrage",
+      "cooldown": 5.0,
+      "mana": 28,
+      "damage": 8,
+      "range": 10,
+      "aoe": 2,
+      "effect": "",
+      "effect_duration": 0,
+      "effect_power": 0
+    },
+    "mage_0": {
+      "name": "Fireball",
+      "desc": "Explosive fireball, burn 3s",
+      "cooldown": 2.0,
+      "mana": 16,
+      "damage": 14,
+      "range": 12,
+      "aoe": 0,
+      "effect": "burn",
+      "effect_duration": 3.0,
+      "effect_power": 4
+    },
+    "mage_1": {
+      "name": "Chain Lightning",
+      "desc": "Lightning bounces to 3 targets",
+      "cooldown": 3.0,
+      "mana": 14,
+      "damage": 12,
+      "range": 14,
+      "aoe": 3,
+      "effect": "",
+      "effect_duration": 0,
+      "effect_power": 0
+    },
+    "mage_2": {
+      "name": "Blizzard",
+      "desc": "5x5 ice storm, slow 50% 2s",
+      "cooldown": 5.5,
+      "mana": 22,
+      "damage": 10,
+      "range": 16,
+      "aoe": 2,
+      "effect": "slow",
+      "effect_duration": 2.0,
+      "effect_power": 50
+    },
+    "mage_3": {
+      "name": "Mana Shield",
+      "desc": "Absorb next 40 damage for 8s",
+      "cooldown": 14.0,
+      "mana": 35,
+      "damage": 0,
+      "range": 0,
+      "aoe": 0,
+      "effect": "shield",
+      "effect_duration": 8.0,
+      "effect_power": 40
+    },
+    "mage_4": {
+      "name": "Blink",
+      "desc": "Teleport 5 tiles in facing direction",
+      "cooldown": 5.0,
+      "mana": 10,
+      "damage": 0,
+      "range": 0,
+      "aoe": 0,
+      "effect": "teleport",
+      "effect_duration": 0,
+      "effect_power": 0
+    },
+    "summon_0": {
+      "name": "Raise Dead",
+      "desc": "Summon 1 skeleton (infinite, max 3)",
+      "cooldown": 4.0,
+      "mana": 10,
+      "damage": 0,
+      "range": 0,
+      "aoe": 0,
+      "effect": "summon",
+      "effect_duration": -1,
+      "effect_power": 1
+    },
+    "summon_1": {
+      "name": "Spirit Drain",
+      "desc": "Drain HP from nearby enemy",
+      "cooldown": 2.5,
+      "mana": 14,
+      "damage": 6,
+      "range": 1,
+      "aoe": 0,
+      "effect": "lifesteal",
+      "effect_duration": 1.0,
+      "effect_power": 50
+    },
+    "summon_2": {
+      "name": "Fire Nova",
+      "desc": "AoE fire explosion around self",
+      "cooldown": 2.0,
+      "mana": 18,
+      "damage": 0,
+      "range": 3,
+      "aoe": 1,
+      "effect": "burn",
+      "effect_duration": 2.0,
+      "effect_power": 5
+    },
+    "summon_3": {
+      "name": "Bone Wall",
+      "desc": "Summon bone wall for 6s",
+      "cooldown": 8.0,
+      "mana": 12,
+      "damage": 0,
+      "range": 0,
+      "aoe": 0,
+      "effect": "decoy",
+      "effect_duration": 6.0,
+      "effect_power": 0
+    },
+    "summon_4": {
+      "name": "Army of the Dead",
+      "desc": "Summon 5 temp skeletons (30s)",
+      "cooldown": 15.0,
+      "mana": 30,
+      "damage": 0,
+      "range": 0,
+      "aoe": 0,
+      "effect": "summon",
+      "effect_duration": 30.0,
+      "effect_power": 5
+    },
+    "heal_0": {
+      "name": "Holy Light",
+      "desc": "Fast heal self (25+INT*2)",
+      "cooldown": 0.5,
+      "mana": 6,
+      "damage": 0,
+      "range": 0,
+      "aoe": 0,
+      "effect": "heal",
+      "effect_duration": 0,
+      "effect_power": 25
+    },
+    "heal_1": {
+      "name": "Greater Heal",
+      "desc": "Powerful self heal (50+INT*3)",
+      "cooldown": 3.0,
+      "mana": 14,
+      "damage": 0,
+      "range": 0,
+      "aoe": 0,
+      "effect": "heal",
+      "effect_duration": 0,
+      "effect_power": 50
+    },
+    "heal_2": {
+      "name": "Radiance",
+      "desc": "AoE heal self + shield 30 for 5s",
+      "cooldown": 5.0,
+      "mana": 16,
+      "damage": 0,
+      "range": 0,
+      "aoe": 0,
+      "effect": "heal",
+      "effect_duration": 0,
+      "effect_power": 20
+    },
+    "heal_3": {
+      "name": "Blessing",
+      "desc": "Buff self +40% ATK for 8s + shield",
+      "cooldown": 7.0,
+      "mana": 18,
+      "damage": 0,
+      "range": 0,
+      "aoe": 0,
+      "effect": "buff",
+      "effect_duration": 8.0,
+      "effect_power": 40
+    },
+    "heal_4": {
+      "name": "Divine Surge",
+      "desc": "Heal self 30% HP + restore 60 MP",
+      "cooldown": 8.0,
+      "mana": 20,
+      "damage": 0,
+      "range": 0,
+      "aoe": 0,
+      "effect": "heal",
+      "effect_duration": 0,
+      "effect_power": 30,
+      "mana_regen": 60
+    },
+    "rogue_0": {
+      "name": "Backstab",
+      "desc": "Melee +100% crit, high damage (25)",
+      "cooldown": 0.8,
+      "mana": 4,
+      "damage": 25,
+      "range": 1,
+      "aoe": 0,
+      "effect": "crit_boost",
+      "effect_duration": 0,
+      "effect_power": 100
+    },
+    "rogue_1": {
+      "name": "Shadow Strike",
+      "desc": "Teleport behind enemy + hit (20)",
+      "cooldown": 3.0,
+      "mana": 10,
+      "damage": 20,
+      "range": 6,
+      "aoe": 0,
+      "effect": "crit_boost",
+      "effect_duration": 0,
+      "effect_power": 50
+    },
+    "rogue_2": {
+      "name": "Fan of Knives",
+      "desc": "AoE 3x3, 15 dmg + separate crit",
+      "cooldown": 2.0,
+      "mana": 8,
+      "damage": 15,
+      "range": 1,
+      "aoe": 1,
+      "effect": "",
+      "effect_duration": 0,
+      "effect_power": 0
+    },
+    "rogue_3": {
+      "name": "Poison Blade",
+      "desc": "Hit 15 dmg + burn 6dmg/s for 5s",
+      "cooldown": 3.0,
+      "mana": 7,
+      "damage": 15,
+      "range": 1,
+      "aoe": 0,
+      "effect": "burn",
+      "effect_duration": 5.0,
+      "effect_power": 6
+    },
+    "rogue_4": {
+      "name": "Vanish",
+      "desc": "+50% dodge, +30% speed for 6s",
+      "cooldown": 8.0,
+      "mana": 8,
+      "damage": 0,
+      "range": 0,
+      "aoe": 0,
+      "effect": "evasion",
+      "effect_duration": 6.0,
+      "effect_power": 50
+    }
+  },
+  "boss_scaling": {
+    "phase2_threshold": 0.5,
+    "phase3_threshold": 0.3,
+    "phase2_atk_mult": 1.3,
+    "phase3_atk_mult": 1.5,
+    "boss_base_dodge": 0.1,
+    "boss_aggro_range": 10
+  },
+  "monster_base_stats": {
+    "base_dodge": 0.05,
+    "aggro_range": 6
+  },
+  "starting_weapons": {
+    "swordsman": {
+      "name": "Rusty Sword",
+      "type": "sword",
+      "atk": 3
+    },
+    "archer": {
+      "name": "Short Bow",
+      "type": "bow",
+      "atk": 2
+    },
+    "mage": {
+      "name": "Wooden Wand",
+      "type": "staff",
+      "atk": 2
+    },
+    "summoner": {
+      "name": "Old Orb",
+      "type": "orb",
+      "atk": 1
+    },
+    "healer": {
+      "name": "Wooden Mace",
+      "type": "mace",
+      "atk": 2
+    },
+    "rogue": {
+      "name": "Rusty Dagger",
+      "type": "dagger",
+      "atk": 3
+    }
+  }
+}

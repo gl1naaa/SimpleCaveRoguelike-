@@ -29,14 +29,25 @@ def rarity_color(rarity):
 
 
 class Inventory:
+    # All equipment slots in order
+    EQUIP_SLOTS = ["weapon", "helmet", "chest", "legs", "boots", "gloves", "necklace", "ring1", "ring2", "cape"]
+    # Map item_type to target slot(s)
+    TYPE_TO_SLOT = {
+        "weapon": "weapon",
+        "helmet": "helmet",
+        "chest": "chest",
+        "legs": "legs",
+        "boots": "boots",
+        "gloves": "gloves",
+        "necklace": "necklace",
+        "ring": None,  # special: find first empty ring slot
+        "cape": "cape",
+    }
+
     def __init__(self, max_slots: int = 20):
         self.slots: List[Optional[Item]] = [None] * max_slots
         self.max_slots = max_slots
-        self.equipment = {
-            "weapon": None,
-            "armor": None,
-            "accessory": None,
-        }
+        self.equipment = {slot: None for slot in self.EQUIP_SLOTS}
         self.gold = 0
         self.selected_slot = 0
 
@@ -80,14 +91,19 @@ class Inventory:
             else:
                 self.remove_item(index)
             return True, f"Used {name}"
-        elif item.item_type == "weapon":
-            self.equip(index, "weapon")
+        elif item.item_type in ("weapon", "helmet", "chest", "legs", "boots",
+                                "gloves", "necklace", "cape"):
+            slot = self.TYPE_TO_SLOT[item.item_type]
+            self.equip(index, slot)
             return True, f"Equipped {item.name}"
-        elif item.item_type == "armor":
-            self.equip(index, "armor")
-            return True, f"Equipped {item.name}"
-        elif item.item_type == "accessory":
-            self.equip(index, "accessory")
+        elif item.item_type == "ring":
+            # Find first empty ring slot, or use ring1
+            if not self.equipment.get("ring1"):
+                self.equip(index, "ring1")
+            elif not self.equipment.get("ring2"):
+                self.equip(index, "ring2")
+            else:
+                self.equip(index, "ring1")
             return True, f"Equipped {item.name}"
         elif item.item_type == "skill_book":
             self.remove_item(index)
@@ -129,13 +145,13 @@ class Inventory:
 
         # Equipment
         lines.append(f"  {_bold()}{_fg(0,200,200)}EQUIPMENT{_rst()}")
-        for slot_name in ["weapon", "armor", "accessory"]:
+        for slot_name in self.EQUIP_SLOTS:
             item = self.equipment.get(slot_name)
-            label = slot_name.upper()
+            label = slot_name.upper()[:9]
             if item:
-                lines.append(f"  {label:12s} {rarity_color(item.rarity)}{item.name}{_rst()}")
+                lines.append(f"  {label:10s} {rarity_color(item.rarity)}{item.name}{_rst()}")
             else:
-                lines.append(f"  {label:12s} (empty)")
+                lines.append(f"  {label:10s} (empty)")
         lines.append("")
 
         # Inventory grid

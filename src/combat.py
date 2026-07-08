@@ -124,12 +124,14 @@ class CombatSystem:
     def add_projectile(self, sx, sy, tx, ty, char, color, speed=8.0, on_hit=None, pierce=False, aoe_radius=0):
         self.projectiles.append(Projectile(sx, sy, tx, ty, char, color, speed, on_hit, pierce, aoe_radius))
 
-    def update_projectiles(self, monsters, bosses, player, log, dt, now):
+    def update_projectiles(self, monsters, bosses, player, log, dt, now, npc_enemies=None):
+        if npc_enemies is None:
+            npc_enemies = []
         for proj in self.projectiles[:]:
             arrived = proj.update(dt)
             if arrived:
                 ix, iy = proj.int_pos()
-                # Hit monsters/bosses
+                # Hit monsters/bosses/npc_enemies
                 for m in list(monsters):
                     if m.alive and m.x == ix and m.y == iy and id(m) not in proj.hit_targets:
                         proj.hit_targets.add(id(m))
@@ -143,6 +145,14 @@ class CombatSystem:
                         proj.hit_targets.add(id(b))
                         if proj.on_hit:
                             proj.on_hit(b, ix, iy)
+                        if not proj.pierce:
+                            proj.done = True
+                            break
+                for ne in list(npc_enemies):
+                    if ne.alive and ne.x == ix and ne.y == iy and id(ne) not in proj.hit_targets:
+                        proj.hit_targets.add(id(ne))
+                        if proj.on_hit:
+                            proj.on_hit(ne, ix, iy)
                         if not proj.pierce:
                             proj.done = True
                             break
@@ -166,6 +176,11 @@ class CombatSystem:
                             d = math.sqrt((b.x - ix)**2 + (b.y - iy)**2)
                             if d <= proj.aoe_radius:
                                 proj.on_hit(b, b.x, b.y)
+                    for ne in list(npc_enemies):
+                        if ne.alive and id(ne) not in proj.hit_targets:
+                            d = math.sqrt((ne.x - ix)**2 + (ne.y - iy)**2)
+                            if d <= proj.aoe_radius:
+                                proj.on_hit(ne, ne.x, ne.y)
         self.projectiles = [p for p in self.projectiles if p.alive()]
 
     def get_projectile_at(self, x: int, y: int) -> Optional[Projectile]:
@@ -281,8 +296,11 @@ class CombatSystem:
                     dx = target.x - player.x
                     dy = target.y - player.y
                     dist = max(1, abs(dx) + abs(dy))
-                    target.x += (dx // dist) * 2
-                    target.y += (dy // dist) * 2
+                    nx = target.x + (dx // dist) * 2
+                    ny = target.y + (dy // dist) * 2
+                    if 0 <= nx < 80 and 0 <= ny < 50:  # bounds check
+                        target.x = nx
+                        target.y = ny
                     self._add_popup(target.x, target.y - 1, "KNOCK", "200,200,255")
                 elif skill.effect == "lifesteal":
                     heal = int(dmg * skill.effect_power / 100.0)
@@ -320,6 +338,8 @@ class CombatSystem:
             return None
         monster.last_attack = now
         player_dodge = getattr(player, 'dodge_chance', 0.02)
+        if self.has_effect(player, "evasion"):
+            player_dodge += self.get_effect_power(player, "evasion") / 100.0
         dmg, crit = self._calc_damage(monster.atk, player.defense, 0.0, player_dodge)
         if dmg == 0:
             self._add_popup(player.x, player.y, "MISS", "200,200,200")
@@ -362,6 +382,8 @@ class CombatSystem:
         if boss.phase >= 3:
             base_dmg = int(base_dmg * 1.5)
         player_dodge = getattr(player, 'dodge_chance', 0.02)
+        if self.has_effect(player, "evasion"):
+            player_dodge += self.get_effect_power(player, "evasion") / 100.0
         dmg, crit = self._calc_damage(base_dmg, player.defense, 0.0, player_dodge)
         if dmg == 0:
             self._add_popup(player.x, player.y, "MISS", "200,200,200")
@@ -419,6 +441,145 @@ class CombatSystem:
         ally.take_damage(dmg)
         self._add_popup(ally.x, ally.y, f"-{dmg}", "255,150,150")
         return dmg, crit
+
+    # ---- Ranged monster attacks ----
+
+    def monster_ranged_attack(self, monster, target, now: float, log: list) -> bool:
+        dist = math.sqrt((monster.x - target.x)**2 + (monster.y - target.y)**2)
+        if dist > monster.attack_range:
+            return False
+        if (now - monster.last_attack) < monster.attack_delay:
+            return False
+        monster.last_attack = now
+
+        def _on_hit(t, hx, hy):
+            t_def = t.defense if hasattr(t, 'defense') else 0
+            dmg, crit = self._calc_damage(monster.atk, t_def, 0.0)
+            if dmg == 0:
+                self._add_popup(t.x, t.y, "MISS", "200,200,200")
+                return
+            actual = t.take_damage(dmg) if hasattr(t, 'take_damage') else 0
+            color = "255,255,100" if crit else "255,150,150"
+            self._add_popup(t.x, t.y, f"-{actual}", color)
+            # Apply spell effect
+            if hasattr(monster, 'spell') and monster.spell and monster.spell == "burn":
+                self.add_effect(t, StatusEffect("burn", 3.0, 4))
+                self._add_popup(t.x, t.y - 1, "BURN", "255,80,0")
+            elif hasattr(monster, 'spell') and monster.spell and monster.spell == "slow":
+                self.add_effect(t, StatusEffect("slow", 2.0, 50))
+                self._add_popup(t.x, t.y - 1, "SLOW", "100,200,255")
+
+        pchar = getattr(monster, 'projectile_char', "-")
+        pcolor = getattr(monster, 'projectile_color', "200,200,200")
+        self.add_projectile(
+            monster.x, monster.y, target.x, target.y,
+            pchar, pcolor, speed=10.0, on_hit=_on_hit
+        )
+        return True
+
+    # ---- NPC Enemy ranged attack ----
+
+    def npc_enemy_ranged_attack(self, npc, target, now: float, log: list) -> bool:
+        dist = math.sqrt((npc.x - target.x)**2 + (npc.y - target.y)**2)
+        if dist > npc.attack_range:
+            return False
+        if (now - npc.last_attack) < npc.attack_delay:
+            return False
+        npc.last_attack = now
+
+        def _on_hit(t, hx, hy):
+            t_def = t.defense if hasattr(t, 'defense') else 0
+            skill_miss = 0.05
+            dmg, crit = self._calc_damage(npc.atk, t_def, npc.crit, skill_miss)
+            if dmg == 0:
+                self._add_popup(t.x, t.y, "MISS", "200,200,200")
+                return
+            actual = t.take_damage(dmg) if hasattr(t, 'take_damage') else 0
+            color = "255,255,100" if crit else "255,150,150"
+            self._add_popup(t.x, t.y, f"-{actual}", color)
+
+        # Archer projectiles are arrows, mage are magic bolts
+        if npc.class_name == "archer":
+            pchar, pcolor = "-", "220,200,140"
+        else:
+            pchar, pcolor = "*", "150,150,255"
+        self.add_projectile(
+            npc.x, npc.y, target.x, target.y,
+            pchar, pcolor, speed=12.0, on_hit=_on_hit
+        )
+        return True
+
+    # ---- NPC Ally ranged attack ----
+
+    def npc_ally_ranged_attack(self, ally, target, now: float, log: list) -> bool:
+        dist = math.sqrt((ally.x - target.x)**2 + (ally.y - target.y)**2)
+        if dist > ally.attack_range:
+            return False
+        if (now - ally.last_attack) < ally.attack_delay:
+            return False
+        ally.last_attack = now
+
+        def _on_hit(t, hx, hy):
+            t_def = t.defense if hasattr(t, 'defense') else 0
+            dmg, crit = self._calc_damage(ally.atk, t_def, ally.crit)
+            if dmg == 0:
+                self._add_popup(t.x, t.y, "MISS", "200,200,200")
+                return
+            actual = t.take_damage(dmg) if hasattr(t, 'take_damage') else 0
+            color = "255,255,100" if crit else "255,150,150"
+            self._add_popup(t.x, t.y, f"-{actual}", color)
+            if not t.alive:
+                xp = self.calculate_xp(t) if hasattr(self, 'calculate_xp') else 10
+                if hasattr(ally, '_player_ref'):
+                    ally._player_ref.gain_xp(xp)
+                    ally._player_ref.monsters_killed += 1
+                    import random
+                    gold_drop = random.randint(3, 15)
+                    ally._player_ref.inventory.gold += gold_drop
+                log.append(f"{ally.name} killed {t.name}!")
+
+        if ally.class_name == "archer":
+            pchar, pcolor = "-", "220,200,140"
+        else:
+            pchar, pcolor = "*", "150,150,255"
+        self.add_projectile(
+            ally.x, ally.y, target.x, target.y,
+            pchar, pcolor, speed=12.0, on_hit=_on_hit
+        )
+        return True
+
+    # ---- Healer auto-heal ----
+
+    def healer_auto_heal(self, healer, allies: list, player, now: float, log: list):
+        """Healer AI: heal nearest ally with lowest HP if below 50%."""
+        if not hasattr(healer, 'healer') or not healer.healer:
+            return
+        if not hasattr(healer, 'last_spell'):
+            healer.last_spell = 0.0
+        if (now - healer.last_spell) < 2.0:
+            return
+        # Find target: ally with lowest HP% below 50%
+        targets = []
+        for a in allies:
+            if a.alive and a is not healer:
+                ratio = a.hp / a.max_hp if a.max_hp > 0 else 0
+                if ratio < 0.5:
+                    targets.append((ratio, a))
+        if player.alive:
+            ratio = player.hp / player.max_hp if player.max_hp > 0 else 0
+            if ratio < 0.5:
+                targets.append((ratio, player))
+        if not targets:
+            return
+        targets.sort(key=lambda x: x[0])
+        target = targets[0][1]
+        # Heal amount
+        heal_amount = int(15 + healer.magic_power * 2)
+        if hasattr(target, 'heal'):
+            target.heal(heal_amount)
+            healer.last_spell = now
+            self._add_popup(target.x, target.y, f"+{heal_amount}", "0,255,100")
+            log.append(f"{healer.name} heals {target.name} for {heal_amount}!")
 
     # ---- Popup management ----
 

@@ -1,5 +1,6 @@
 import sys
 import time
+import msvcrt
 from ui import fg, bg, rst, bold, dim, BLK, SH2, DIAM, HEART, DSTAR, BOX_H, BOX_V, BOX_TL, BOX_TR, BOX_BL, BOX_BR, BOX_LT, BOX_RT, rainbow, clear_screen, hide_cursor, show_cursor
 from input import InputState, wait_for_any_key
 from config import CLASSES
@@ -114,6 +115,9 @@ def show_name_input() -> str:
 
     # Use input() for reliable text entry
     try:
+        # Drain any buffered keystrokes from previous screens
+        while msvcrt.kbhit():
+            msvcrt.getch()
         # Move cursor to the input box position and clear it
         sys.stdout.write(f'\x1b[11;7H{fg(255, 255, 100)}' + ' ' * (box_w - 2) + rst())
         sys.stdout.write(f'\x1b[11;7H')
@@ -168,9 +172,10 @@ def show_title() -> str:
     inp = InputState()
     t = 0.0
     selected = 0
-    options = ["NEW GAME", "CONTROLS", "QUIT"]
+    options = ["NEW GAME", "SETTINGS", "CONTROLS", "QUIT"]
     option_descs = [
         "Begin your adventure",
+        "Configure game settings",
         "Learn the controls",
         "Leave the dungeon",
     ]
@@ -245,6 +250,10 @@ def show_title() -> str:
 
 def show_class_select() -> str:
     """Show class selection screen, return chosen class name."""
+    # Drain any lingering key presses from name input
+    while msvcrt.kbhit():
+        msvcrt.getch()
+    time.sleep(0.15)
     inp = InputState()
     selected = 0
     class_names = list(CLASSES.keys())
@@ -291,6 +300,26 @@ def show_class_select() -> str:
             "   / \\    ",
             "  /   \\   ",
         ],
+        "healer": [
+            "    +     ",
+            "   /|\\    ",
+            "  / | \\   ",
+            "   /|\\    ",
+            "   /|\\    ",
+            "  / | \\   ",
+            "   / \\    ",
+            "    O     ",
+        ],
+        "rogue": [
+            "   /\\     ",
+            "  /  \\    ",
+            " / <> \\   ",
+            "  |  |    ",
+            "  /\\ /\\   ",
+            " /  V  \\  ",
+            "    O     ",
+            "   / \\    ",
+        ],
     }
 
     class_stats = {
@@ -298,6 +327,8 @@ def show_class_select() -> str:
         "archer":    [("ATK", "★★★"), ("DEF", "★★"), ("SPD", "★★★★"), ("MAG", "★")],
         "mage":      [("ATK", "★★"), ("DEF", "★"), ("SPD", "★★"), ("MAG", "★★★★")],
         "summoner":  [("ATK", "★★★"), ("DEF", "★★★"), ("SPD", "★★★"), ("MAG", "★★★")],
+        "healer":    [("ATK", "★"), ("DEF", "★★"), ("SPD", "★"), ("MAG", "★★★★")],
+        "rogue":     [("ATK", "★★★"), ("DEF", "★"), ("SPD", "★★★★"), ("MAG", "★")],
     }
 
     skill_names = {
@@ -305,6 +336,8 @@ def show_class_select() -> str:
         "archer":    ["Quick Shot", "Volley", "Poison Arrow", "Frost Arrow", "Arrow Rain"],
         "mage":      ["Fireball", "Chain Lightning", "Blizzard", "Mana Shield", "Blink"],
         "summoner":  ["Raise Dead", "Spirit Drain", "Fire Nova", "Bone Wall", "Army of Dead"],
+        "healer":    ["Holy Light", "Greater Heal", "Purify", "Blessing", "Mana Well"],
+        "rogue":     ["Backstab", "Shadow Strike", "Fan of Knives", "Poison Blade", "Evasion"],
     }
 
     while True:
@@ -460,6 +493,7 @@ def show_controls():
             ("SPACE",         "Interact / Attack enemies"),
             ("Z X C V B",     "Use skills (5 slots)"),
             ("E",             "Open inventory"),
+            ("DEL",           "Delete item from inventory"),
             ("ESC",           "Pause / Quit to menu"),
         ]
 

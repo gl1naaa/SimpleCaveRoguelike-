@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from config import (
     MAP_WIDTH, MAP_HEIGHT, ROOM_MIN, ROOM_MAX, CONNECT_CHANCE,
     ROOM_NORMAL, ROOM_TREASURE, ROOM_BOSS, ROOM_TRAP, ROOM_EVENT,
-    ROOM_WEIGHTS,
+    ROOM_WEIGHTS, ALTAR,
 )
 
 
@@ -198,3 +198,72 @@ class Dungeon:
 
 def generate_dungeon(floor: int = 1):
     return Dungeon(floor=floor).generate()
+
+
+# ============================================================
+#  City generation — safe zone between floors
+# ============================================================
+
+def generate_city(floor: int = 1):
+    """Generate a city map. Returns (tiles, walls, shop_items, player_start)."""
+    w, h = 60, 40
+    tiles = [["#" for _ in range(w)] for _ in range(h)]
+
+    # Big open room
+    for y in range(3, h - 3):
+        for x in range(3, w - 3):
+            tiles[y][x] = "."
+
+    # Inner walls for atmosphere (pillars)
+    for px in [15, 30, 45]:
+        for py in [10, 20, 30]:
+            if 3 < py < h - 3 and 3 < px < w - 3:
+                tiles[py][px] = "#"
+
+    walls = set()
+    for y in range(h):
+        for x in range(w):
+            if tiles[y][x] == "#":
+                walls.add((x, y))
+
+    # Multiple shops with different themes
+    from items import (generate_random_item, generate_weapon, generate_chest,
+                       generate_helmet, generate_legs, generate_boots,
+                       generate_gloves, generate_necklace, generate_ring,
+                       generate_cape, generate_consumable)
+    import random as _rand
+
+    # Arrange shops in a grid: 2 rows x 5 cols
+    shop_defs = [
+        {"x": 8,  "y": 6,  "name": "Weapon Shop",   "gen": lambda fl: generate_weapon(fl, "")},
+        {"x": 20, "y": 6,  "name": "Helmet Shop",   "gen": lambda fl: generate_helmet(fl)},
+        {"x": 32, "y": 6,  "name": "Chest Shop",    "gen": lambda fl: generate_chest(fl)},
+        {"x": 44, "y": 6,  "name": "Legs Shop",     "gen": lambda fl: generate_legs(fl)},
+        {"x": 8,  "y": 12, "name": "Boots Shop",    "gen": lambda fl: generate_boots(fl)},
+        {"x": 20, "y": 12, "name": "Gloves Shop",   "gen": lambda fl: generate_gloves(fl)},
+        {"x": 32, "y": 12, "name": "Necklace Shop", "gen": lambda fl: generate_necklace(fl)},
+        {"x": 44, "y": 12, "name": "Ring Shop",     "gen": lambda fl: generate_ring(fl)},
+        {"x": 55, "y": 6,  "name": "Cape Shop",     "gen": lambda fl: generate_cape(fl)},
+        {"x": 55, "y": 12, "name": "Potion Shop",   "gen": lambda fl: generate_consumable(fl)},
+    ]
+
+    shops = []
+    for sd in shop_defs:
+        tiles[sd["y"]][sd["x"]] = "$"
+        items_list = []
+        for _ in range(3):
+            items_list.append(sd["gen"](floor))
+        shops.append({"x": sd["x"], "y": sd["y"], "name": sd["name"], "items": items_list})
+
+    # Place altar at center
+    altar_x, altar_y = w // 2, h // 2
+    tiles[altar_y][altar_x] = ALTAR
+
+    # Place stairs (>) at right side
+    stairs_x, stairs_y = w - 8, h // 2
+    tiles[stairs_y][stairs_x] = ">"
+
+    # Player start
+    player_start = (5, h // 2)
+
+    return tiles, walls, shops, player_start

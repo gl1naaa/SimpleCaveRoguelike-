@@ -10,8 +10,9 @@ VK = {
     "SPACE": 0x20, "ESC": 0x1B,
     "I": 0x49, "E": 0x45, "Z": 0x5A, "X": 0x58, "C": 0x43,
     "V": 0x56, "B": 0x42, "N": 0x4E,
-    "ENTER": 0x0D, "TAB": 0x09,
+    "ENTER": 0x0D, "TAB": 0x09, "DEL": 0x2E,
     "1": 0x31, "2": 0x32, "3": 0x33, "4": 0x34, "5": 0x35,
+    "6": 0x36, "7": 0x37, "8": 0x38, "9": 0x39,
 }
 
 def _is_pressed(vk):
@@ -42,7 +43,8 @@ class InputState:
             if _is_pressed(VK["N"]):     now.add("skill5")
             if _is_pressed(VK["ENTER"]): now.add("enter")
             if _is_pressed(VK["TAB"]):   now.add("tab")
-            for i, k in enumerate(["1","2","3","4","5"], 0):
+            if _is_pressed(VK["DEL"]):   now.add("delete")
+            for i, k in enumerate(["1","2","3","4","5","6","7","8","9"], 0):
                 if _is_pressed(VK[k]): now.add(f"hotkey{i}")
         else:
             # Fallback for pipe/stdin

@@ -67,6 +67,11 @@ def main():
             action = show_title()
             if action == "quit":
                 break
+            elif action == "settings":
+                from settings import show_settings
+                show_settings()
+                sys.stdout.write("\x1b[2J\x1b[H")
+                sys.stdout.flush()
             elif action == "controls":
                 show_controls()
             elif action == "new_game":
