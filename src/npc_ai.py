@@ -1,6 +1,7 @@
 import math
 from typing import Tuple, List, Optional, Set
 from pathfinding import bfs_path, flee_path, flank_positions
+from config import CRIT_MULTIPLIER
 
 
 def _dist(a, b) -> float:
@@ -47,7 +48,7 @@ def _has_ally_tanking(npc, target, allies) -> bool:
     return False
 
 
-def _skill_ready(npc, slot: int) -> bool:
+def _skill_ready(npc, slot: int, now: float = 0.0) -> bool:
     if slot >= len(npc.skills):
         return False
     sk = npc.skills[slot]
@@ -55,7 +56,7 @@ def _skill_ready(npc, slot: int) -> bool:
         return False
     if npc.mp < sk.mana_cost:
         return False
-    return sk.ready(0)
+    return sk.ready(now)
 
 
 def _try_use_skill(npc, slot: int, target, now: float, combat, log) -> bool:
@@ -86,7 +87,7 @@ def _try_use_skill(npc, slot: int, target, now: float, combat, log) -> bool:
 
     is_crit = npc.crit > 0 and (hash(str(now) + str(npc.x)) % 100) < npc.crit * 100
     if is_crit:
-        dmg = int(dmg * 2.0)
+        dmg = int(dmg * CRIT_MULTIPLIER)
 
     actual = target.take_damage(dmg) if hasattr(target, 'take_damage') else 0
     color = "255,255,100" if is_crit else "255,150,150"
@@ -119,7 +120,7 @@ def _score_rogue(npc, target, allies, enemies, walls, occupied, now) -> List[Tup
         if path:
             actions.append((95, "flee", {"path": path}))
 
-    if hp < 0.5 and _skill_ready(npc, 4):
+    if hp < 0.5 and _skill_ready(npc, 4, now):
         actions.append((88, "use_skill", {"slot": 4}))
 
     flank = flank_positions((npc.x, npc.y), (target.x, target.y), walls, occupied, 3)
@@ -127,13 +128,13 @@ def _score_rogue(npc, target, allies, enemies, walls, occupied, now) -> List[Tup
         flank_score = 85 if has_tank else 75
         actions.append((flank_score, "flank", {"pos": flank[0]}))
 
-    if dist <= 1.5 and _skill_ready(npc, 0):
+    if dist <= 1.5 and _skill_ready(npc, 0, now):
         actions.append((75, "use_skill", {"slot": 0, "target": target}))
 
-    if dist <= 1.5 and _skill_ready(npc, 3):
+    if dist <= 1.5 and _skill_ready(npc, 3, now):
         actions.append((70, "use_skill", {"slot": 3, "target": target}))
 
-    if dist <= 2 and _skill_ready(npc, 2):
+    if dist <= 2 and _skill_ready(npc, 2, now):
         actions.append((65, "use_skill", {"slot": 2, "target": target}))
 
     if dist <= 1.5:
@@ -160,19 +161,19 @@ def _score_mage(npc, target, allies, enemies, walls, occupied, now) -> List[Tupl
         path = flee_path((npc.x, npc.y), (target.x, target.y), walls, occupied, 2)
         if path:
             actions.append((95, "flee", {"path": path}))
-        if _skill_ready(npc, 4):
+        if _skill_ready(npc, 4, now):
             actions.append((90, "use_skill", {"slot": 4}))
 
-    if _skill_ready(npc, 3) and hp < 0.5:
+    if _skill_ready(npc, 3, now) and hp < 0.5:
         actions.append((82, "use_skill", {"slot": 3}))
 
     nearby_count = _count_nearby((target.x, target.y), enemies, 3)
-    if nearby_count >= 2 and _skill_ready(npc, 1):
+    if nearby_count >= 2 and _skill_ready(npc, 1, now):
         actions.append((78, "use_skill", {"slot": 1, "target": target}))
-    if nearby_count >= 2 and _skill_ready(npc, 2):
+    if nearby_count >= 2 and _skill_ready(npc, 2, now):
         actions.append((72, "use_skill", {"slot": 2, "target": target}))
 
-    if _skill_ready(npc, 0) and dist <= 12:
+    if _skill_ready(npc, 0, now) and dist <= 12:
         actions.append((68, "use_skill", {"slot": 0, "target": target}))
 
     if npc.ranged and dist > 1:
@@ -204,17 +205,17 @@ def _score_archer(npc, target, allies, enemies, walls, occupied, now) -> List[Tu
         if path:
             actions.append((92, "flee", {"path": path}))
 
-    if _skill_ready(npc, 3):
+    if _skill_ready(npc, 3, now):
         actions.append((80, "use_skill", {"slot": 3, "target": target}))
 
-    if _skill_ready(npc, 2):
+    if _skill_ready(npc, 2, now):
         actions.append((75, "use_skill", {"slot": 2, "target": target}))
 
     nearby_count = _count_nearby((target.x, target.y), enemies, 3)
-    if nearby_count >= 2 and _skill_ready(npc, 4):
+    if nearby_count >= 2 and _skill_ready(npc, 4, now):
         actions.append((70, "use_skill", {"slot": 4, "target": target}))
 
-    if _skill_ready(npc, 1):
+    if _skill_ready(npc, 1, now):
         actions.append((65, "use_skill", {"slot": 1, "target": target}))
 
     if dist > 2:
@@ -234,20 +235,20 @@ def _score_swordsman(npc, target, allies, enemies, walls, occupied, now) -> List
     dist = _dist(npc, target)
     hp = _hp_ratio(npc)
 
-    if hp < 0.5 and _skill_ready(npc, 4):
+    if hp < 0.5 and _skill_ready(npc, 4, now):
         actions.append((90, "use_skill", {"slot": 4}))
 
-    if hp < 0.7 and _skill_ready(npc, 3):
+    if hp < 0.7 and _skill_ready(npc, 3, now):
         actions.append((80, "use_skill", {"slot": 3}))
 
-    if dist <= 1.5 and _skill_ready(npc, 2):
+    if dist <= 1.5 and _skill_ready(npc, 2, now):
         actions.append((82, "use_skill", {"slot": 2, "target": target}))
 
     nearby_count = _count_nearby((npc.x, npc.y), enemies, 2)
-    if nearby_count >= 2 and _skill_ready(npc, 1):
+    if nearby_count >= 2 and _skill_ready(npc, 1, now):
         actions.append((75, "use_skill", {"slot": 1, "target": target}))
 
-    if _skill_ready(npc, 0) and dist <= 1.5:
+    if _skill_ready(npc, 0, now) and dist <= 1.5:
         actions.append((70, "use_skill", {"slot": 0, "target": target}))
 
     if dist <= 1.5:
@@ -279,29 +280,29 @@ def _score_healer(npc, target, allies, enemies, walls, occupied, now) -> List[Tu
 
     if wounded and mp > 0.3:
         w_dist = _dist(npc, wounded)
-        if _skill_ready(npc, 1) and worst_hp < 0.3:
+        if _skill_ready(npc, 1, now) and worst_hp < 0.3:
             actions.append((92, "use_skill", {"slot": 1, "target": wounded}))
-        if _skill_ready(npc, 0):
+        if _skill_ready(npc, 0, now):
             actions.append((85, "use_skill", {"slot": 0, "target": wounded}))
         if w_dist > 6:
             path = bfs_path((npc.x, npc.y), (wounded.x, wounded.y), walls, occupied, 15)
             if path:
                 actions.append((60, "chase", {"path": path}))
 
-    if _skill_ready(npc, 2) and mp > 0.3:
+    if _skill_ready(npc, 2, now) and mp > 0.3:
         for a in allies:
             if a.alive and a is not npc:
                 if hasattr(a, 'status_effects') or True:
                     actions.append((55, "use_skill", {"slot": 2, "target": a}))
                     break
 
-    if _skill_ready(npc, 3) and mp > 0.3:
+    if _skill_ready(npc, 3, now) and mp > 0.3:
         for a in allies:
             if a.alive and a is not npc:
                 actions.append((50, "use_skill", {"slot": 3, "target": a}))
                 break
 
-    if _skill_ready(npc, 4) and mp < 0.3:
+    if _skill_ready(npc, 4, now) and mp < 0.3:
         for a in allies:
             if a.alive and a is not npc:
                 actions.append((48, "use_skill", {"slot": 4, "target": a}))
@@ -326,19 +327,19 @@ def _score_summoner(npc, target, allies, enemies, walls, occupied, now) -> List[
 
     ally_count = sum(1 for a in allies if a.alive and a is not npc)
 
-    if ally_count < 2 and _skill_ready(npc, 4):
+    if ally_count < 2 and _skill_ready(npc, 4, now):
         actions.append((88, "use_skill", {"slot": 4}))
 
-    if ally_count < 3 and _skill_ready(npc, 0):
+    if ally_count < 3 and _skill_ready(npc, 0, now):
         actions.append((80, "use_skill", {"slot": 0}))
 
-    if dist < 4 and _skill_ready(npc, 3):
+    if dist < 4 and _skill_ready(npc, 3, now):
         actions.append((70, "use_skill", {"slot": 3}))
 
-    if dist <= 3 and _skill_ready(npc, 2):
+    if dist <= 3 and _skill_ready(npc, 2, now):
         actions.append((68, "use_skill", {"slot": 2, "target": target}))
 
-    if hp < 0.6 and _skill_ready(npc, 1):
+    if hp < 0.6 and _skill_ready(npc, 1, now):
         actions.append((65, "use_skill", {"slot": 1, "target": target}))
 
     if dist > 1:

@@ -336,7 +336,7 @@ def show_class_select() -> str:
         "archer":    ["Quick Shot", "Volley", "Poison Arrow", "Frost Arrow", "Arrow Rain"],
         "mage":      ["Fireball", "Chain Lightning", "Blizzard", "Mana Shield", "Blink"],
         "summoner":  ["Raise Dead", "Spirit Drain", "Fire Nova", "Bone Wall", "Army of Dead"],
-        "healer":    ["Holy Light", "Greater Heal", "Purify", "Blessing", "Mana Well"],
+        "healer":    ["Holy Light", "Greater Heal", "Radiance", "Blessing", "Divine Surge"],
         "rogue":     ["Backstab", "Shadow Strike", "Fan of Knives", "Poison Blade", "Evasion"],
     }
 

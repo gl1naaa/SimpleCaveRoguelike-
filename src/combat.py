@@ -5,6 +5,8 @@ from typing import Optional, Tuple, List, Dict, TYPE_CHECKING
 if TYPE_CHECKING:
     from entities import Player, Monster, Boss, Ally
 
+from config import CRIT_MULTIPLIER
+
 
 class DamagePopup:
     def __init__(self, x: int, y: int, text: str, color: str = "255,255,255", duration: float = 1.5):
@@ -115,7 +117,7 @@ class CombatSystem:
         variance = max(1, base // 4)
         dmg = base + random.randint(-variance, variance)
         if is_crit:
-            dmg = int(dmg * 2.0)
+            dmg = int(dmg * CRIT_MULTIPLIER)
         return max(1, dmg), is_crit
 
     def _add_popup(self, x, y, text, color):
@@ -264,7 +266,7 @@ class CombatSystem:
         self._add_popup(monster.x, monster.y, f"-{dmg}", color)
         return dmg, crit
 
-    def player_use_skill(self, player, skill, targets: list, now: float, occupied: set = None) -> list:
+    def player_use_skill(self, player, skill, targets: list, now: float, occupied: set = None, gm=None) -> list:
         results = []
         atk = player.atk
         if self.has_effect(player, "buff"):
@@ -298,7 +300,10 @@ class CombatSystem:
                     dist = max(1, abs(dx) + abs(dy))
                     nx = target.x + (dx // dist) * 2
                     ny = target.y + (dy // dist) * 2
-                    if 0 <= nx < 80 and 0 <= ny < 50:  # bounds check
+                    map_w = gm.w if gm else 80
+                    map_h = gm.h if gm else 50
+                    walls = gm.walls if gm else set()
+                    if 0 <= nx < map_w and 0 <= ny < map_h and (nx, ny) not in walls:
                         target.x = nx
                         target.y = ny
                     self._add_popup(target.x, target.y - 1, "KNOCK", "200,200,255")

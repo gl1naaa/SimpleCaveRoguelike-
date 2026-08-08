@@ -677,6 +677,17 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
 
 
 # ============================================================
+#  Panel helper (must be defined before render_city)
+# ============================================================
+def _pnl(text, fg_c=None):
+    PBG = bg(14, 14, 20)
+    PANEL_W = 24
+    if fg_c:
+        return PBG + fg_c + text.ljust(PANEL_W) + rst()
+    return PBG + text.ljust(PANEL_W) + rst()
+
+
+# ============================================================
 #  City Render
 # ============================================================
 def render_city(gm, player, shop_items, floor_num, log, shop_cursor,
@@ -828,14 +839,6 @@ def render_city(gm, player, shop_items, floor_num, log, shop_cursor,
 
     sys.stdout.write(chr(10).join(padded))
     sys.stdout.flush()
-
-
-def _pnl(text, fg_c=None):
-    PBG = bg(14, 14, 20)
-    PANEL_W = 24
-    if fg_c:
-        return PBG + fg_c + text.ljust(PANEL_W) + rst()
-    return PBG + text.ljust(PANEL_W) + rst()
 
 
 # ============================================================
@@ -1094,12 +1097,10 @@ def run_game(class_name: str, player_name: str):
                         if inv_col == 0: inv_cursor = (inv_cursor - GRID_COLS) % GRID_SLOTS
                         elif inv_col == 1: inv_cursor = (inv_cursor - 1) % MAX_EQ
                         render_inventory(player, inv_cursor, inv_col)
-                        time.sleep(0.1)
                     elif inp.is_held("down") or "down" in keys:
                         if inv_col == 0: inv_cursor = (inv_cursor + GRID_COLS) % GRID_SLOTS
                         elif inv_col == 1: inv_cursor = (inv_cursor + 1) % MAX_EQ
                         render_inventory(player, inv_cursor, inv_col)
-                        time.sleep(0.1)
                     elif inp.is_held("left") or "left" in keys:
                         if inv_col == 0:
                             if inv_cursor % GRID_COLS == 0:
@@ -1108,7 +1109,6 @@ def run_game(class_name: str, player_name: str):
                         elif inv_col == 1:
                             inv_col = 0; inv_cursor = min(inv_cursor, GRID_SLOTS - 1)
                         render_inventory(player, inv_cursor, inv_col)
-                        time.sleep(0.1)
                     elif inp.is_held("right") or "right" in keys:
                         if inv_col == 0:
                             if inv_cursor % GRID_COLS == GRID_COLS - 1:
@@ -1117,7 +1117,6 @@ def run_game(class_name: str, player_name: str):
                         elif inv_col == 1:
                             inv_col = 0; inv_cursor = min(inv_cursor, GRID_SLOTS - 1)
                         render_inventory(player, inv_cursor, inv_col)
-                        time.sleep(0.1)
                     if "action" in keys:
                         if inv_col == 0 and 0 <= inv_cursor < player.inventory.max_slots:
                             item = player.inventory.get_item(inv_cursor)
@@ -1271,11 +1270,11 @@ def run_game(class_name: str, player_name: str):
                 if inp.is_held("up") or "up" in keys:
                     if inv_col == 0: inv_cursor = (inv_cursor - GRID_COLS) % GRID_SLOTS
                     elif inv_col == 1: inv_cursor = (inv_cursor - 1) % MAX_EQ
-                    render_inventory(player, inv_cursor, inv_col); time.sleep(0.1)
+                    render_inventory(player, inv_cursor, inv_col)
                 elif inp.is_held("down") or "down" in keys:
                     if inv_col == 0: inv_cursor = (inv_cursor + GRID_COLS) % GRID_SLOTS
                     elif inv_col == 1: inv_cursor = (inv_cursor + 1) % MAX_EQ
-                    render_inventory(player, inv_cursor, inv_col); time.sleep(0.1)
+                    render_inventory(player, inv_cursor, inv_col)
                 elif inp.is_held("left") or "left" in keys:
                     if inv_col == 0:
                         if inv_cursor % GRID_COLS == 0:
@@ -1283,7 +1282,7 @@ def run_game(class_name: str, player_name: str):
                         else: inv_cursor -= 1
                     elif inv_col == 1:
                         inv_col = 0; inv_cursor = min(inv_cursor, GRID_SLOTS - 1)
-                    render_inventory(player, inv_cursor, inv_col); time.sleep(0.1)
+                    render_inventory(player, inv_cursor, inv_col)
                 elif inp.is_held("right") or "right" in keys:
                     if inv_col == 0:
                         if inv_cursor % GRID_COLS == GRID_COLS - 1:
@@ -1291,7 +1290,7 @@ def run_game(class_name: str, player_name: str):
                         else: inv_cursor += 1
                     elif inv_col == 1:
                         inv_col = 0; inv_cursor = min(inv_cursor, GRID_SLOTS - 1)
-                    render_inventory(player, inv_cursor, inv_col); time.sleep(0.1)
+                    render_inventory(player, inv_cursor, inv_col)
                 if "action" in keys:
                     if inv_col == 0 and 0 <= inv_cursor < player.inventory.max_slots:
                         item = player.inventory.get_item(inv_cursor)

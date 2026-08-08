@@ -174,6 +174,29 @@ def _tuple(lst):
 
 _cfg = _load_json()
 
+
+def _validate_cfg(cfg, defaults, prefix=""):
+    """Validate numeric config values — fall back to defaults if wrong type."""
+    for key, default_val in defaults.items():
+        if isinstance(default_val, dict):
+            if key in cfg and isinstance(cfg[key], dict):
+                _validate_cfg(cfg[key], default_val, f"{prefix}{key}.")
+            elif key not in cfg:
+                cfg[key] = default_val
+        else:
+            if key in cfg:
+                val = cfg[key]
+                if type(val) is not type(default_val):
+                    if isinstance(default_val, (int, float)) and isinstance(val, (int, float)):
+                        pass
+                    else:
+                        cfg[key] = default_val
+            else:
+                cfg[key] = default_val
+
+
+_validate_cfg(_cfg, _DEFAULTS)
+
 # --- Display ---
 SCREEN_WIDTH  = _deep_get(_cfg, "display", "screen_width",  default=_DEFAULTS["display"]["screen_width"])
 SCREEN_HEIGHT = _deep_get(_cfg, "display", "screen_height", default=_DEFAULTS["display"]["screen_height"])
@@ -207,6 +230,9 @@ ALTAR       = _deep_get(_cfg, "display_symbols", "altar",       default=_DEFAULT
 MOVE_COOLDOWN  = _deep_get(_cfg, "movement", "move_cooldown",  default=_DEFAULTS["movement"]["move_cooldown"])
 SKILL_COOLDOWN = _deep_get(_cfg, "movement", "skill_cooldown", default=_DEFAULTS["movement"]["skill_cooldown"])
 MONSTER_TICK   = _deep_get(_cfg, "movement", "monster_tick",   default=_DEFAULTS["movement"]["monster_tick"])
+
+# --- Combat ---
+CRIT_MULTIPLIER = _deep_get(_cfg, "combat", "crit_multiplier", default=_DEFAULTS["combat"]["crit_multiplier"])
 
 # --- Inventory ---
 INVENTORY_SIZE = _deep_get(_cfg, "inventory", "size", default=_DEFAULTS["inventory"]["size"])
