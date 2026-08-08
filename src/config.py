@@ -29,7 +29,7 @@ _DEFAULTS = {
         "basic_atk_cooldown_others": 0.5, "auto_range_archer": 4,
         "auto_range_melee": 1, "swordsman_atk_bonus": 1.2,
         "skill_miss_base": 0.10, "skill_miss_per_level": 0.008, "skill_miss_min": 0.02,
-        "monster_gold_min": 5, "monster_gold_max_base": 15, "monster_gold_floor_mult": 3,
+        "monster_gold_min": 8, "monster_gold_max_base": 25, "monster_gold_floor_mult": 3,
         "boss_gold_base": 50, "boss_gold_floor_mult": 20,
         "trap_damage_min": 5, "trap_damage_max": 15, "event_heal_amount": 20,
         "archer_projectile_speed": 14.0, "blink_distance": 5,
@@ -107,8 +107,8 @@ _DEFAULTS = {
     },
     "rooms": {"weights": {"normal": 55, "treasure": 18, "boss": 12, "trap": 10, "event": 5}},
     "monster_scaling": {
-        "hp_scale": 12, "atk_scale": 2.5, "def_scale": 0.5,
-        "base_per_floor": 6, "scale_per_floor": 2,
+        "hp_scale": 18, "atk_scale": 4.0, "def_scale": 1.0,
+        "base_per_floor": 6, "scale_per_floor": 3,
     },
     "npc_enemies": {
         "chance": 0.3, "min_floor": 2, "per_room_max": 1,
@@ -125,7 +125,7 @@ _DEFAULTS = {
         "ally_focus_range": 3, "ally_leash_range": 10, "ally_follow_distance": 2,
     },
     "fov": {"radius": 10, "ray_count": 720, "min_brightness": 0.05},
-    "chest_loot": {"min_items": 1, "max_items": 3, "gold_min": 10, "gold_max": 50, "gold_floor_divisor": 3},
+    "chest_loot": {"min_items": 1, "max_items": 3, "gold_min": 15, "gold_max": 70, "gold_floor_divisor": 3},
     "unique_items": {"drop_chance": 0.005},
     "consumable_value": {"base": 15, "floor_mult": 3},
     "class_weapon_affinity": 0.65,
@@ -338,6 +338,13 @@ CHEST_MIN_ITEMS = _deep_get(_cfg, "chest_loot", "min_items", default=_DEFAULTS["
 CHEST_MAX_ITEMS = _deep_get(_cfg, "chest_loot", "max_items", default=_DEFAULTS["chest_loot"]["max_items"])
 CHEST_GOLD_MIN  = _deep_get(_cfg, "chest_loot", "gold_min",  default=_DEFAULTS["chest_loot"]["gold_min"])
 CHEST_GOLD_MAX  = _deep_get(_cfg, "chest_loot", "gold_max",  default=_DEFAULTS["chest_loot"]["gold_max"])
+
+# --- Monster gold ---
+MONSTER_GOLD_MIN       = _deep_get(_cfg, "combat", "monster_gold_min",       default=_DEFAULTS["combat"]["monster_gold_min"])
+MONSTER_GOLD_MAX_BASE  = _deep_get(_cfg, "combat", "monster_gold_max_base",  default=_DEFAULTS["combat"]["monster_gold_max_base"])
+MONSTER_GOLD_FLOOR_MULT= _deep_get(_cfg, "combat", "monster_gold_floor_mult", default=_DEFAULTS["combat"]["monster_gold_floor_mult"])
+BOSS_GOLD_BASE         = _deep_get(_cfg, "combat", "boss_gold_base",         default=_DEFAULTS["combat"]["boss_gold_base"])
+BOSS_GOLD_FLOOR_MULT   = _deep_get(_cfg, "combat", "boss_gold_floor_mult",   default=_DEFAULTS["combat"]["boss_gold_floor_mult"])
 
 # --- Colors (RGB tuples) ---
 _c = _deep_get(_cfg, "colors", default=_DEFAULTS["colors"])

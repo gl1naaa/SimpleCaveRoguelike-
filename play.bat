@@ -8,6 +8,6 @@ if "%~1"=="" (
     exit /b
 )
 
-cd /d D:\scripts\rogue_py\src
-D:\scripts\rogue_py\.venv\Scripts\python.exe main.py
+cd /d D:\scripts\SimpleCaveRoguelike\src
+D:\scripts\.venv312\Scripts\python.exe main.py
 pause

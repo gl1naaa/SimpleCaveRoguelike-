@@ -5,6 +5,7 @@ from typing import List, Optional, Dict, Tuple
 from inventory import Inventory, rarity_color
 from skills import Skill, get_skill_for_slot, can_use_skill
 from items import Item
+from config import MONSTER_DEF_SCALE
 
 
 def has_line_of_sight(x1: int, y1: int, x2: int, y2: int, walls) -> bool:
@@ -79,8 +80,8 @@ CLASS_BASE_STATS = {
 CLASS_BASE_HP = {
     "swordsman": 18,
     "archer":    12,
-    "mage":      10,
-    "summoner":  14,
+    "mage":      16,
+    "summoner":  16,
     "healer":    12,
     "rogue":     11,
 }
@@ -126,7 +127,6 @@ class Player(Entity):
                 self.learned_skills.append(sk.id)
 
         # Give starting weapon so skills work
-        from items import Item
         weapon_map = {
             "swordsman": ("Rusty Sword", "weapon", "sword", {"atk": 3}),
             "archer":    ("Short Bow",   "weapon", "bow",   {"atk": 2}),
@@ -296,7 +296,7 @@ class Player(Entity):
         if self.xp >= self.xp_to_next:
             self.level += 1
             self.xp -= self.xp_to_next
-            self.xp_to_next = int(40 * (1.4 ** self.level))
+            self.xp_to_next = int(40 * (1.25 ** self.level))
             primary = CLASS_PRIMARY_STAT.get(self.class_name, "str")
             if primary == "str":
                 self.bonus_str += 3
@@ -372,7 +372,7 @@ class Monster(Entity):
         hp_mult = 1 + floor * 0.3
         self.hp = int(info["hp"] * hp_mult)
         self.max_hp = self.hp
-        self.defense = int(floor * 0.8)
+        self.defense = int(floor * MONSTER_DEF_SCALE)
         self.dodge = 0.05
         self.aggro_range = 6
         self.last_move = 0.0
@@ -532,7 +532,7 @@ class Ally(Entity):
         if self.xp >= self.xp_to_next:
             self.level += 1
             self.xp -= self.xp_to_next
-            self.xp_to_next = int(15 * (1.3 ** self.level))
+            self.xp_to_next = int(15 * (1.2 ** self.level))
             self._recalc_level_stats()
             return True
         return False
@@ -973,7 +973,7 @@ class NPCAlly(Entity):
         if self.xp >= self.xp_to_next:
             self.level += 1
             self.xp -= self.xp_to_next
-            self.xp_to_next = int(30 * (1.3 ** self.level))
+            self.xp_to_next = int(30 * (1.2 ** self.level))
             self.base_str += 1
             self.base_agi += 1
             self.base_int += 1

@@ -1017,7 +1017,9 @@ def run_game(class_name: str, player_name: str):
     mp_regen_acc = 0.0
     hp_regen_acc = 0.0
     basic_atk_cd = 0.0
+    inv_nav_cd = 0.0
     last_frame = time.time()
+    last_move_dx, last_move_dy = 1, 0
 
     # City state
     in_city = False
@@ -1093,30 +1095,37 @@ def run_game(class_name: str, player_name: str):
                     GRID_COLS = 6
                     GRID_SLOTS = player.inventory.max_slots
                     MAX_EQ = 10
-                    if inp.is_held("up") or "up" in keys:
-                        if inv_col == 0: inv_cursor = (inv_cursor - GRID_COLS) % GRID_SLOTS
-                        elif inv_col == 1: inv_cursor = (inv_cursor - 1) % MAX_EQ
-                        render_inventory(player, inv_cursor, inv_col)
-                    elif inp.is_held("down") or "down" in keys:
-                        if inv_col == 0: inv_cursor = (inv_cursor + GRID_COLS) % GRID_SLOTS
-                        elif inv_col == 1: inv_cursor = (inv_cursor + 1) % MAX_EQ
-                        render_inventory(player, inv_cursor, inv_col)
-                    elif inp.is_held("left") or "left" in keys:
-                        if inv_col == 0:
-                            if inv_cursor % GRID_COLS == 0:
-                                inv_col = 1; inv_cursor = min(inv_cursor // GRID_COLS, MAX_EQ - 1)
-                            else: inv_cursor -= 1
-                        elif inv_col == 1:
-                            inv_col = 0; inv_cursor = min(inv_cursor, GRID_SLOTS - 1)
-                        render_inventory(player, inv_cursor, inv_col)
-                    elif inp.is_held("right") or "right" in keys:
-                        if inv_col == 0:
-                            if inv_cursor % GRID_COLS == GRID_COLS - 1:
-                                inv_col = 1; inv_cursor = min(inv_cursor // GRID_COLS, MAX_EQ - 1)
-                            else: inv_cursor += 1
-                        elif inv_col == 1:
-                            inv_col = 0; inv_cursor = min(inv_cursor, GRID_SLOTS - 1)
-                        render_inventory(player, inv_cursor, inv_col)
+                    inv_moved = False
+                    if game_time - inv_nav_cd >= 0.08:
+                        if inp.is_held("up") or "up" in keys:
+                            if inv_col == 0: inv_cursor = (inv_cursor - GRID_COLS) % GRID_SLOTS
+                            elif inv_col == 1: inv_cursor = (inv_cursor - 1) % MAX_EQ
+                            render_inventory(player, inv_cursor, inv_col)
+                            inv_moved = True
+                        elif inp.is_held("down") or "down" in keys:
+                            if inv_col == 0: inv_cursor = (inv_cursor + GRID_COLS) % GRID_SLOTS
+                            elif inv_col == 1: inv_cursor = (inv_cursor + 1) % MAX_EQ
+                            render_inventory(player, inv_cursor, inv_col)
+                            inv_moved = True
+                        elif inp.is_held("left") or "left" in keys:
+                            if inv_col == 0:
+                                if inv_cursor % GRID_COLS == 0:
+                                    inv_col = 1; inv_cursor = min(inv_cursor // GRID_COLS, MAX_EQ - 1)
+                                else: inv_cursor -= 1
+                            elif inv_col == 1:
+                                inv_col = 0; inv_cursor = min(inv_cursor, GRID_SLOTS - 1)
+                            render_inventory(player, inv_cursor, inv_col)
+                            inv_moved = True
+                        elif inp.is_held("right") or "right" in keys:
+                            if inv_col == 0:
+                                if inv_cursor % GRID_COLS == GRID_COLS - 1:
+                                    inv_col = 1; inv_cursor = min(inv_cursor // GRID_COLS, MAX_EQ - 1)
+                                else: inv_cursor += 1
+                            elif inv_col == 1:
+                                inv_col = 0; inv_cursor = min(inv_cursor, GRID_SLOTS - 1)
+                            render_inventory(player, inv_cursor, inv_col)
+                            inv_moved = True
+                        if inv_moved: inv_nav_cd = game_time
                     if "action" in keys:
                         if inv_col == 0 and 0 <= inv_cursor < player.inventory.max_slots:
                             item = player.inventory.get_item(inv_cursor)
@@ -1179,7 +1188,8 @@ def run_game(class_name: str, player_name: str):
                             shop_cursor = i
                     if "enter" in keys and city_shop_items and 0 <= shop_cursor < len(city_shop_items):
                         item = city_shop_items[shop_cursor]
-                        price = 50 + floor_num * 20 + shop_cursor * 10
+                        rarity_mult = {"common": 1.0, "uncommon": 1.3, "rare": 1.8, "epic": 2.5, "mythic": 4.0, "legendary": 6.0}.get(item.rarity, 1.0)
+                        price = int((50 + floor_num * 20 + shop_cursor * 10) * rarity_mult)
                         if player.inventory.gold >= price:
                             player.inventory.gold -= price
                             if player.inventory.add_item(item):
@@ -1267,30 +1277,37 @@ def run_game(class_name: str, player_name: str):
                 GRID_COLS = 6
                 GRID_SLOTS = player.inventory.max_slots
                 MAX_EQ = 10
-                if inp.is_held("up") or "up" in keys:
-                    if inv_col == 0: inv_cursor = (inv_cursor - GRID_COLS) % GRID_SLOTS
-                    elif inv_col == 1: inv_cursor = (inv_cursor - 1) % MAX_EQ
-                    render_inventory(player, inv_cursor, inv_col)
-                elif inp.is_held("down") or "down" in keys:
-                    if inv_col == 0: inv_cursor = (inv_cursor + GRID_COLS) % GRID_SLOTS
-                    elif inv_col == 1: inv_cursor = (inv_cursor + 1) % MAX_EQ
-                    render_inventory(player, inv_cursor, inv_col)
-                elif inp.is_held("left") or "left" in keys:
-                    if inv_col == 0:
-                        if inv_cursor % GRID_COLS == 0:
-                            inv_col = 1; inv_cursor = min(inv_cursor // GRID_COLS, MAX_EQ - 1)
-                        else: inv_cursor -= 1
-                    elif inv_col == 1:
-                        inv_col = 0; inv_cursor = min(inv_cursor, GRID_SLOTS - 1)
-                    render_inventory(player, inv_cursor, inv_col)
-                elif inp.is_held("right") or "right" in keys:
-                    if inv_col == 0:
-                        if inv_cursor % GRID_COLS == GRID_COLS - 1:
-                            inv_col = 1; inv_cursor = min(inv_cursor // GRID_COLS, MAX_EQ - 1)
-                        else: inv_cursor += 1
-                    elif inv_col == 1:
-                        inv_col = 0; inv_cursor = min(inv_cursor, GRID_SLOTS - 1)
-                    render_inventory(player, inv_cursor, inv_col)
+                inv_moved = False
+                if game_time - inv_nav_cd >= 0.08:
+                    if inp.is_held("up") or "up" in keys:
+                        if inv_col == 0: inv_cursor = (inv_cursor - GRID_COLS) % GRID_SLOTS
+                        elif inv_col == 1: inv_cursor = (inv_cursor - 1) % MAX_EQ
+                        render_inventory(player, inv_cursor, inv_col)
+                        inv_moved = True
+                    elif inp.is_held("down") or "down" in keys:
+                        if inv_col == 0: inv_cursor = (inv_cursor + GRID_COLS) % GRID_SLOTS
+                        elif inv_col == 1: inv_cursor = (inv_cursor + 1) % MAX_EQ
+                        render_inventory(player, inv_cursor, inv_col)
+                        inv_moved = True
+                    elif inp.is_held("left") or "left" in keys:
+                        if inv_col == 0:
+                            if inv_cursor % GRID_COLS == 0:
+                                inv_col = 1; inv_cursor = min(inv_cursor // GRID_COLS, MAX_EQ - 1)
+                            else: inv_cursor -= 1
+                        elif inv_col == 1:
+                            inv_col = 0; inv_cursor = min(inv_cursor, GRID_SLOTS - 1)
+                        render_inventory(player, inv_cursor, inv_col)
+                        inv_moved = True
+                    elif inp.is_held("right") or "right" in keys:
+                        if inv_col == 0:
+                            if inv_cursor % GRID_COLS == GRID_COLS - 1:
+                                inv_col = 1; inv_cursor = min(inv_cursor // GRID_COLS, MAX_EQ - 1)
+                            else: inv_cursor += 1
+                        elif inv_col == 1:
+                            inv_col = 0; inv_cursor = min(inv_cursor, GRID_SLOTS - 1)
+                        render_inventory(player, inv_cursor, inv_col)
+                        inv_moved = True
+                    if inv_moved: inv_nav_cd = game_time
                 if "action" in keys:
                     if inv_col == 0 and 0 <= inv_cursor < player.inventory.max_slots:
                         item = player.inventory.get_item(inv_cursor)
@@ -1354,6 +1371,9 @@ def run_game(class_name: str, player_name: str):
             elif inp.is_held("left"):  dx = -1
             elif inp.is_held("right"): dx = 1
 
+            if dx != 0 or dy != 0:
+                last_move_dx, last_move_dy = dx, dy
+
             moved = False
             if (dx != 0 or dy != 0) and player.can_move(now):
                 nx, ny = player.x + dx, player.y + dy
@@ -1398,11 +1418,11 @@ def run_game(class_name: str, player_name: str):
                                 xp = combat.calculate_xp(target)
                                 player.gain_xp(xp)
                                 player.monsters_killed += 1
-                                gold_drop = random.randint(5, 15 + floor_num * 3)
+                                gold_drop = random.randint(MONSTER_GOLD_MIN, MONSTER_GOLD_MAX_BASE + floor_num * MONSTER_GOLD_FLOOR_MULT)
                                 player.inventory.gold += gold_drop
                                 if isinstance(target, Boss):
                                     boss_killed = True
-                                    gold_drop = 50 + floor_num * 20
+                                    gold_drop = BOSS_GOLD_BASE + floor_num * BOSS_GOLD_FLOOR_MULT
                                     player.inventory.gold += gold_drop
                                     log.append(f"KILLED {target.name}! +{gold_drop}g")
                                 else:
@@ -1447,7 +1467,7 @@ def run_game(class_name: str, player_name: str):
                                     xp = combat.calculate_xp(nearest_enemy)
                                     player.gain_xp(xp)
                                     player.monsters_killed += 1
-                                    gold_drop = random.randint(5, 15 + floor_num * 3)
+                                    gold_drop = random.randint(MONSTER_GOLD_MIN, MONSTER_GOLD_MAX_BASE + floor_num * MONSTER_GOLD_FLOOR_MULT)
                                     player.inventory.gold += gold_drop
                                     log.append(f"Killed {nearest_enemy.name}! +{gold_drop}g")
                             else:
@@ -1458,7 +1478,7 @@ def run_game(class_name: str, player_name: str):
                     moved = True
                     # Traps activate on step
                     if gm.tile(player.x, player.y) == '^':
-                        trap_dmg = random.randint(5, 15)
+                        trap_dmg = random.randint(5 + floor_num * 2, 15 + floor_num * 3)
                         player.hp -= trap_dmg
                         if player.hp <= 0:
                             player.alive = False
@@ -1519,13 +1539,15 @@ def run_game(class_name: str, player_name: str):
                             player.restore_mp(skill.mana_regen)
                             combat._add_popup(player.x, player.y - 1, f"+{skill.mana_regen} MP", "100,150,255")
                     elif skill.effect == "teleport":
-                        # Blink: move 5 tiles in last moved direction or random
+                        # Blink: move 5 tiles in last moved direction
                         old_x, old_y = player.x, player.y
-                        for _ in range(5):
-                            nx = player.x + (1 if random.random() > 0.5 else -1)
-                            ny = player.y + (1 if random.random() > 0.5 else -1)
+                        blink_dist = 5
+                        for step in range(1, blink_dist + 1):
+                            nx = player.x + last_move_dx * step
+                            ny = player.y + last_move_dy * step
                             if 0 <= nx < gm.w and 0 <= ny < gm.h and gm.walkable(nx, ny) and (nx, ny) not in gm.walls:
                                 player.x, player.y = nx, ny
+                            else:
                                 break
                         combat._add_popup(player.x, player.y - 1, "BLINK", "180,120,255")
                         # Trail effect from old to new position
@@ -1552,9 +1574,10 @@ def run_game(class_name: str, player_name: str):
                                 if gm.walkable(sx, sy):
                                     dur = skill.effect_duration if not is_infinite else float('inf')
                                     ally = Ally(sx, sy, "skeleton", dur)
-                                    ally.max_hp = int(ally.max_hp + player.str * 1.5)
+                                    floor_mult = 1 + floor_num * 0.15
+                                    ally.max_hp = int((ally.max_hp + player.str * 1.5) * floor_mult)
                                     ally.hp = ally.max_hp
-                                    ally.atk = int(ally.atk + player.agi * 0.3)
+                                    ally.atk = int((ally.atk + player.agi * 0.3) * floor_mult)
                                     allies.append(ally)
                                     if is_infinite:
                                         inf_skeletons += 1
@@ -1707,14 +1730,14 @@ def run_game(class_name: str, player_name: str):
                                             xp = combat.calculate_xp(target)
                                             player_ref.gain_xp(xp)
                                             player_ref.monsters_killed += 1
-                                            gold_drop = random.randint(5, 15 + floor_num * 3)
+                                            gold_drop = random.randint(MONSTER_GOLD_MIN, MONSTER_GOLD_MAX_BASE + floor_num * MONSTER_GOLD_FLOOR_MULT)
                                             player_ref.inventory.gold += gold_drop
                                             log.append(f"Killed {target.name} with {sk.name}! +{gold_drop}g")
                                         elif isinstance(target, Boss):
                                             xp = combat.calculate_xp(target)
                                             player_ref.gain_xp(xp)
                                             player_ref.monsters_killed += 1
-                                            gold_drop = 50 + floor_num * 20
+                                            gold_drop = BOSS_GOLD_BASE + floor_num * BOSS_GOLD_FLOOR_MULT
                                             player_ref.inventory.gold += gold_drop
                                             boss_killed = True
                                             log.append(f"KILLED {target.name} with {sk.name}! +{gold_drop}g")
@@ -1999,7 +2022,7 @@ def run_game(class_name: str, player_name: str):
                         xp = combat.calculate_xp(b)
                         player.gain_xp(xp)
                         player.monsters_killed += 1
-                        gold_drop = 50 + floor_num * 20
+                        gold_drop = BOSS_GOLD_BASE + floor_num * BOSS_GOLD_FLOOR_MULT
                         player.inventory.gold += gold_drop
                         log.append(f"KILLED {b.name}! +{xp} XP, +{gold_drop}g!")
                     continue

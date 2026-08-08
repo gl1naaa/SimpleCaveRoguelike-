@@ -47,8 +47,8 @@
     "skill_miss_base": 0.1,
     "skill_miss_per_level": 0.008,
     "skill_miss_min": 0.02,
-    "monster_gold_min": 5,
-    "monster_gold_max_base": 15,
+    "monster_gold_min": 8,
+    "monster_gold_max_base": 25,
     "monster_gold_floor_mult": 3,
     "boss_gold_base": 50,
     "boss_gold_floor_mult": 20,
@@ -317,11 +317,11 @@
     }
   },
   "monster_scaling": {
-    "hp_scale": 12,
-    "atk_scale": 2.5,
-    "def_scale": 0.5,
+    "hp_scale": 18,
+    "atk_scale": 4.0,
+    "def_scale": 1.0,
     "base_per_floor": 6,
-    "scale_per_floor": 2
+    "scale_per_floor": 3
   },
   "monster_unlocks": {
     "orc_floor": 3,
@@ -386,8 +386,8 @@
   "chest_loot": {
     "min_items": 1,
     "max_items": 3,
-    "gold_min": 10,
-    "gold_max": 50,
+    "gold_min": 15,
+    "gold_max": 70,
     "gold_floor_divisor": 3
   },
   "unique_items": {

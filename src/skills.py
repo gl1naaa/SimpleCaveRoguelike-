@@ -137,24 +137,24 @@ _reg(Skill("summon_4", "Army of the Dead",
 #  HEALER — support, heals, buffs, utility
 # ============================================================
 _reg(Skill("heal_0", "Holy Light",
-    "Fast heal self (25+INT*2)",
-    "healer", "mace", 0, 0.5, 6, 0, 0, effect="heal", effect_power=25))
+    "Fast heal self (15% HP)",
+    "healer", "mace", 0, 1.5, 10, 0, 0, effect="heal", effect_power=15))
 
 _reg(Skill("heal_1", "Greater Heal",
-    "Powerful self heal (50+INT*3)",
-    "healer", "mace", 1, 3.0, 14, 0, 0, effect="heal", effect_power=50))
+    "Powerful self heal (30% HP)",
+    "healer", "mace", 1, 5.0, 22, 0, 0, effect="heal", effect_power=30))
 
 _reg(Skill("heal_2", "Radiance",
-    "AoE heal self (20+INT*2) + shield 30 for 5s",
-    "healer", "mace", 2, 5.0, 16, 0, 0, effect="heal", effect_power=20))
+    "AoE heal self (12% HP) + shield 30 for 5s",
+    "healer", "mace", 2, 8.0, 26, 0, 0, effect="heal", effect_power=12))
 
 _reg(Skill("heal_3", "Blessing",
     "Buff self +40% ATK for 8s + shield 30",
-    "healer", "mace", 3, 7.0, 18, 0, 0, effect="buff", effect_power=40, effect_duration=8.0))
+    "healer", "mace", 3, 10.0, 32, 0, 0, effect="buff", effect_power=40, effect_duration=8.0))
 
 _reg(Skill("heal_4", "Divine Surge",
-    "Heal self 30% HP + restore 60 MP",
-    "healer", "mace", 4, 8.0, 20, 0, 0, effect="heal", effect_power=30, mana_regen=60))
+    "Heal self 18% HP + restore 60 MP",
+    "healer", "mace", 4, 12.0, 40, 0, 0, effect="heal", effect_power=18, mana_regen=60))
 
 
 # ============================================================
