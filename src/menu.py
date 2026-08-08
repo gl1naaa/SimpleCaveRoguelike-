@@ -1,9 +1,18 @@
 import sys
 import time
-import msvcrt
 from ui import fg, bg, rst, bold, dim, BLK, SH2, DIAM, HEART, DSTAR, BOX_H, BOX_V, BOX_TL, BOX_TR, BOX_BL, BOX_BR, BOX_LT, BOX_RT, rainbow, clear_screen, hide_cursor, show_cursor
 from input import InputState, wait_for_any_key
 from config import CLASSES
+
+# Cross-platform msvcrt replacement
+try:
+    import msvcrt
+    _HAS_MSVCRT = True
+except ImportError:
+    _HAS_MSVCRT = False
+    import tty
+    import termios
+    import select
 
 try:
     import shutil
@@ -11,6 +20,31 @@ try:
     TERM_H = max(shutil.get_terminal_size().lines, 40)
 except Exception:
     TERM_W, TERM_H = 120, 40
+
+
+def _drain_keys():
+    """Clear any stuck key states from previous screen."""
+    if _HAS_MSVCRT:
+        try:
+            while msvcrt.kbhit():
+                msvcrt.getch()
+        except Exception:
+            pass
+    else:
+        # Unix-like: flush stdin
+        try:
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            tty.setcbreak(fd)
+            while True:
+                rlist, _, _ = select.select([sys.stdin], [], [], 0)
+                if not rlist:
+                    break
+                sys.stdin.read(1)
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        except Exception:
+            pass
+    time.sleep(0.1)
 
 
 def _center(text, width):
@@ -116,8 +150,7 @@ def show_name_input() -> str:
     # Use input() for reliable text entry
     try:
         # Drain any buffered keystrokes from previous screens
-        while msvcrt.kbhit():
-            msvcrt.getch()
+        _drain_keys()
         # Move cursor to the input box position and clear it
         sys.stdout.write(f'\x1b[11;7H{fg(255, 255, 100)}' + ' ' * (box_w - 2) + rst())
         sys.stdout.write(f'\x1b[11;7H')
@@ -128,26 +161,6 @@ def show_name_input() -> str:
 
     hide_cursor()
     return name.strip() if name.strip() else 'Adventurer'
-
-
-def _drain_keys():
-    """Clear any stuck key states from previous screen."""
-    import ctypes
-    if not hasattr(ctypes, 'windll'):
-        return
-    user32 = ctypes.windll.user32
-    # Wait for all keys to be released
-    for _ in range(10):
-        any_pressed = False
-        for vk in [0x0D, 0x20, 0x1B, 0x41, 0x42, 0x43, 0x44, 0x45, 0x53, 0x57,
-                    0x25, 0x26, 0x27, 0x28, 0x5A, 0x58, 0x56, 0x42]:
-            if user32.GetAsyncKeyState(vk) & 0x8000:
-                any_pressed = True
-                break
-        if not any_pressed:
-            break
-        time.sleep(0.05)
-    time.sleep(0.1)
 
 
 # ============================================================
@@ -251,9 +264,7 @@ def show_title() -> str:
 def show_class_select() -> str:
     """Show class selection screen, return chosen class name."""
     # Drain any lingering key presses from name input
-    while msvcrt.kbhit():
-        msvcrt.getch()
-    time.sleep(0.15)
+    _drain_keys()
     inp = InputState()
     selected = 0
     class_names = list(CLASSES.keys())
