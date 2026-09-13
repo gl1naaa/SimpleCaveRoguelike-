@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simple-cave-roguelike"
+version = "2.1.0"
+description = "A terminal roguelike dungeon crawler"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+rogue = "main:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = [
+  "ally_ai", "combat", "config", "entities", "env_effects", "fov",
+  "fx", "game", "input", "inventory", "items", "main", "map_generator",
+  "menu", "meta", "npc_ai", "pathfinding", "run_stats", "settings",
+  "skills", "ui"
+]
+
+[tool.setuptools.data-files]
+"." = ["src/config.json"]

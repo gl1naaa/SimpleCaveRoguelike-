@@ -6,3 +6,4 @@ __pycache__/
 *.pyo
 meta_save.json
 src/run_history.json
+*.egg-info/
