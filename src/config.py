@@ -29,7 +29,7 @@ _DEFAULTS = {
         "basic_atk_cooldown_others": 0.5, "auto_range_archer": 4,
         "auto_range_melee": 1, "swordsman_atk_bonus": 1.2,
         "skill_miss_base": 0.10, "skill_miss_per_level": 0.008, "skill_miss_min": 0.02,
-        "monster_gold_min": 8, "monster_gold_max_base": 25, "monster_gold_floor_mult": 3,
+        "monster_gold_min": 7, "monster_gold_max_base": 22, "monster_gold_floor_mult": 3,
         "boss_gold_base": 50, "boss_gold_floor_mult": 20,
         "trap_damage_min": 5, "trap_damage_max": 15, "event_heal_amount": 20,
         "archer_projectile_speed": 14.0, "blink_distance": 5,
@@ -125,11 +125,11 @@ _DEFAULTS = {
         "ally_focus_range": 3, "ally_leash_range": 10, "ally_follow_distance": 2,
     },
     "fov": {"radius": 10, "ray_count": 720, "min_brightness": 0.05},
-    "chest_loot": {"min_items": 1, "max_items": 3, "gold_min": 15, "gold_max": 70, "gold_floor_divisor": 3},
+    "chest_loot": {"min_items": 1, "max_items": 3, "gold_min": 12, "gold_max": 55, "gold_floor_divisor": 3},
     "unique_items": {"drop_chance": 0.005},
     "consumable_value": {"base": 15, "floor_mult": 3},
     "class_weapon_affinity": 0.65,
-    "city": {"base_price": 50, "price_floor_mult": 20, "price_index_mult": 10,
+    "city": {"base_price": 60, "price_floor_mult": 20, "price_index_mult": 10,
              "width": 60, "height": 40, "items_per_shop": 3},
     "gameplay": {"total_floors": 10, "victory_floor": 10},
     "colors": {
@@ -314,6 +314,8 @@ NPC_ENEMY_CLASS_WEIGHTS = _deep_get(_cfg, "npc_enemies", "class_weights", defaul
 
 # --- City ---
 CITY_NPC_BASE_PRICE = _deep_get(_cfg, "city", "base_price", default=_DEFAULTS["city"]["base_price"])
+CITY_PRICE_FLOOR_MULT = _deep_get(_cfg, "city", "price_floor_mult", default=_DEFAULTS["city"]["price_floor_mult"])
+CITY_PRICE_INDEX_MULT = _deep_get(_cfg, "city", "price_index_mult", default=_DEFAULTS["city"]["price_index_mult"])
 
 # --- Party ---
 MAX_PARTY_SIZE = _deep_get(_cfg, "party", "max_size", default=_DEFAULTS["party"]["max_size"])
@@ -322,6 +324,7 @@ MAX_PARTY_SIZE = _deep_get(_cfg, "party", "max_size", default=_DEFAULTS["party"]
 MONSTER_HP_SCALE         = _deep_get(_cfg, "monster_scaling", "hp_scale",        default=_DEFAULTS["monster_scaling"]["hp_scale"])
 MONSTER_ATK_SCALE        = _deep_get(_cfg, "monster_scaling", "atk_scale",       default=_DEFAULTS["monster_scaling"]["atk_scale"])
 MONSTER_DEF_SCALE        = _deep_get(_cfg, "monster_scaling", "def_scale",       default=_DEFAULTS["monster_scaling"]["def_scale"])
+SKILL_SCALE_DEFAULT_COEF = _deep_get(_cfg, "skills_scale_defaults", "coef", default=0.3)
 MONSTERS_PER_FLOOR_BASE  = _deep_get(_cfg, "monster_scaling", "base_per_floor", default=_DEFAULTS["monster_scaling"]["base_per_floor"])
 MONSTERS_PER_FLOOR_SCALE = _deep_get(_cfg, "monster_scaling", "scale_per_floor", default=_DEFAULTS["monster_scaling"]["scale_per_floor"])
 
@@ -361,3 +364,19 @@ COLOR_MONSTER   = tuple(_c.get("monster", [220,70,70]))
 COLOR_BOSS      = tuple(_c.get("boss", [200,40,200]))
 COLOR_TRAP      = tuple(_c.get("trap", [200,120,40]))
 COLOR_SHOP      = tuple(_c.get("shop", [80,200,120]))
+
+# --- Theme ---
+THEME_NAME = _deep_get(_cfg, "theme", default="dungeon")
+
+_themes_all = _deep_get(_cfg, "themes", default={})
+_theme_raw = _themes_all.get(THEME_NAME, {}) if isinstance(_themes_all, dict) else {}
+
+def _theme_color(key, fallback):
+    val = _theme_raw.get(key) if isinstance(_theme_raw, dict) else None
+    if isinstance(val, list) and len(val) >= 3:
+        return (val[0], val[1], val[2])
+    return fallback
+
+THEME_PANEL_BG = _theme_color("panel_bg", (14, 14, 20))
+THEME_STONE    = _theme_color("stone",    (68, 62, 78))
+THEME_FLOOR_BG = _theme_color("floor_bg", (16, 14, 18))

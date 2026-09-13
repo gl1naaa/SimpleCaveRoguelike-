@@ -8,13 +8,36 @@ from ui import (fg, bg, rst, bold, dim, BLK, SH1, SH2, SH3, DIAM, HEART, DSTAR, 
 from input import InputState, wait_for_any_key
 from fov import FOV
 from map_generator import generate_dungeon, Room
-from entities import Player, Monster, Boss, Ally, Chest, MONSTER_TYPES, BOSS_TYPES, NPCEnemy, has_line_of_sight
+from entities import Player, Monster, Boss, Ally, NPCAlly, Chest, MONSTER_TYPES, BOSS_TYPES, NPCEnemy, has_line_of_sight
 from combat import CombatSystem, DamagePopup, StatusEffect, Projectile
 from npc_ai import npc_decide_and_act
-from inventory import Inventory
+from ally_ai import npc_ally_decide_and_act, _most_wounded
+from pathfinding import flee_path
+from inventory import Inventory, handle_inventory_input
 from items import Item, generate_random_item
 from menu import show_title, show_class_select, show_controls, show_death, show_level_up, show_victory
 from map_generator import generate_city
+try:
+    from meta import MetaProgression, apply_meta_bonuses, open_meta_shop
+    _META_AVAILABLE = True
+except ImportError:
+    _META_AVAILABLE = False
+try:
+    from run_stats import RunTracker
+    _RUN_STATS_AVAILABLE = True
+except ImportError:
+    _RUN_STATS_AVAILABLE = False
+try:
+    from env_effects import (TILE_WATER, TILE_BARREL, TILE_RUBBLE,
+                             explode_barrel, apply_tile_effect, check_trap_at_tile)
+    _ENV_EFFECTS_AVAILABLE = True
+except ImportError:
+    _ENV_EFFECTS_AVAILABLE = False
+try:
+    from fx import FXSystem, water_char, render_particle
+    _FX_AVAILABLE = True
+except ImportError:
+    _FX_AVAILABLE = False
 
 # ============================================================
 #  Game Map
@@ -35,7 +58,10 @@ class GameMap:
         return "#"
 
     def walkable(self, x, y):
-        return self.tile(x, y) in (".", STAIRS_DOWN, "*", "^", "$", "&")
+        t = self.tile(x, y)
+        if _ENV_EFFECTS_AVAILABLE:
+            return t in (".", STAIRS_DOWN, "*", "^", "$", "&", TILE_WATER, TILE_RUBBLE)
+        return t in (".", STAIRS_DOWN, "*", "^", "$", "&")
 
     def is_wall(self, x, y):
         return self.tile(x, y) == "#"
@@ -115,7 +141,7 @@ def gen_floor(floor_num: int, player: Player):
     from config import NPC_ENEMY_CHANCE, NPC_ENEMY_MIN_FLOOR, NPC_ENEMY_CLASSES, NPC_ENEMY_CLASS_WEIGHTS, NPC_ENEMY_PER_ROOM_MAX
     monster_pool = list(MONSTER_TYPES.keys())
     # Exclude ranged mobs from the base pool (they get added separately)
-    base_monsters = [m for m in monster_pool if m in ["rat", "bat", "goblin", "skeleton", "spider", "slime"]][:6]
+    base_monsters = [m for m in monster_pool if m in ["rat", "bat", "goblin", "skeleton", "spider", "slime", "pack_hunter"]][:7]
     ranged_monsters = [m for m in monster_pool if MONSTER_TYPES.get(m, {}).get("ranged", False)]
     floor_monsters = list(base_monsters)
     if floor_num >= 3:
@@ -124,6 +150,12 @@ def gen_floor(floor_num: int, player: Player):
         floor_monsters += ["demon"]
     if floor_num >= 7:
         floor_monsters += ["dragon"]
+    if floor_num >= 3:
+        floor_monsters += ["stone_guard"]
+    if floor_num >= 4:
+        floor_monsters += ["venom_stalker"]
+    if floor_num >= 6:
+        floor_monsters += ["blood_cultist"]
     # Add ranged mobs to pool on floor 2+
     if floor_num >= 2:
         floor_monsters += ranged_monsters
@@ -146,6 +178,8 @@ def gen_floor(floor_num: int, player: Player):
                     else:
                         mtype = random.choice(floor_monsters)
                         m = Monster(pos[0], pos[1], mtype, floor_num)
+                        if floor_num >= 2 and random.random() < min(0.16, 0.025 + floor_num * 0.012):
+                            m.promote_elite()
                         monsters.append(m)
         elif room.room_type == ROOM_BOSS:
             boss_names = list(BOSS_TYPES.keys())
@@ -189,10 +223,144 @@ def _vis_len(s):
         i += 1
     return length
 
+
+def _clamp_color(v):
+    return max(0, min(255, int(v)))
+
+
+def _rgb_scale(rgb, amount):
+    return tuple(_clamp_color(c * amount) for c in rgb)
+
+
+def _rgb_shift(rgb, shift):
+    return tuple(_clamp_color(c + s) for c, s in zip(rgb, shift))
+
+
+def _floor_theme(floor_num: int) -> Dict[str, object]:
+    themes = [
+        {
+            "name": "Damp Caves", "accent": (80, 190, 150),
+            "floor_bg": (13, 16, 18), "floor_fg": (45, 62, 58),
+            "stone": (80, 92, 96), "fog": (10, 13, 15), "void": (5, 7, 9),
+            "water": (45, 130, 180), "hazard": (200, 120, 45),
+        },
+        {
+            "name": "Old Ruins", "accent": (215, 175, 95),
+            "floor_bg": (17, 15, 14), "floor_fg": (70, 62, 52),
+            "stone": (105, 96, 86), "fog": (13, 12, 12), "void": (7, 7, 8),
+            "water": (60, 95, 130), "hazard": (220, 145, 45),
+        },
+        {
+            "name": "Spore Vaults", "accent": (170, 220, 90),
+            "floor_bg": (12, 18, 13), "floor_fg": (58, 76, 48),
+            "stone": (78, 96, 70), "fog": (8, 13, 9), "void": (4, 7, 4),
+            "water": (70, 145, 120), "hazard": (170, 210, 55),
+        },
+        {
+            "name": "Ember Rift", "accent": (255, 135, 55),
+            "floor_bg": (22, 13, 10), "floor_fg": (90, 55, 42),
+            "stone": (108, 72, 62), "fog": (15, 9, 8), "void": (8, 4, 4),
+            "water": (80, 80, 120), "hazard": (255, 95, 35),
+        },
+        {
+            "name": "Black Shrine", "accent": (180, 130, 255),
+            "floor_bg": (14, 12, 20), "floor_fg": (58, 50, 76),
+            "stone": (84, 74, 108), "fog": (10, 8, 15), "void": (4, 3, 8),
+            "water": (90, 80, 180), "hazard": (230, 70, 160),
+        },
+    ]
+    return themes[min((max(1, floor_num) - 1) // 2, len(themes) - 1)]
+
+
+def _light_for_tile(x, y, player, tile, theme, game_time):
+    dist = math.sqrt((x - player.x) ** 2 + (y - player.y) ** 2)
+    warm = 0.0
+    if tile in (ALTAR, STAIRS_DOWN, SHOP_CHAR):
+        warm = 0.20 + 0.08 * math.sin(game_time * 3.0)
+    elif _ENV_EFFECTS_AVAILABLE and tile == TILE_BARREL:
+        warm = 0.08 + 0.04 * math.sin(game_time * 5.0 + x)
+    torch = ((x * 11 + y * 7) % 31 == 0)
+    if torch:
+        warm = max(warm, 0.10 + 0.05 * math.sin(game_time * 6.0 + x + y))
+    return min(1.0, max(0.08, 1.0 - dist * 0.035 + warm))
+
+
+def _tile_glyph(tile, x, y, gm, game_time):
+    if tile == "#":
+        return gm.wall_char(x, y)
+    if tile == ".":
+        variants = [DOT, ".", ",", chr(183)]
+        return variants[(x * 3 + y * 5) % len(variants)]
+    if tile == STAIRS_DOWN:
+        return ARROW
+    if tile == ALTAR:
+        return "*" if int(game_time * 4) % 2 == 0 else DSTAR
+    if tile == "^":
+        return "^"
+    if tile == SHOP_CHAR:
+        return "$"
+    if tile == "&":
+        return "&"
+    if _ENV_EFFECTS_AVAILABLE and tile == TILE_WATER:
+        return water_char(game_time, fancy=True) if _FX_AVAILABLE else "~"
+    if _ENV_EFFECTS_AVAILABLE and tile == TILE_BARREL:
+        return "!"
+    if _ENV_EFFECTS_AVAILABLE and tile == TILE_RUBBLE:
+        return chr(9617)
+    return tile if tile else " "
+
+
+def _find_entity_at(x, y, monsters, bosses, allies, npc_enemies):
+    for group in (bosses, monsters, npc_enemies or [], allies):
+        for ent in group:
+            if ent.alive and ent.x == x and ent.y == y:
+                return ent
+    return None
+
+
+def _inspect_lines(gm, player, monsters, bosses, chests, allies, npc_enemies, combat_sys, pos):
+    x, y = pos
+    tile = gm.tile(x, y)
+    lines = [" Inspect", f" X:{x} Y:{y}"]
+    ent = _find_entity_at(x, y, monsters, bosses, allies, npc_enemies)
+    chest = next((c for c in chests if c.x == x and c.y == y), None)
+    if x == player.x and y == player.y:
+        lines += [f" {player.name}", f" HP {player.hp}/{player.max_hp}", f" MP {player.mp}/{player.max_mp}"]
+    elif ent:
+        hp = getattr(ent, "hp", 0)
+        max_hp = getattr(ent, "max_hp", 0)
+        lines += [f" {ent.name[:20]}", f" HP {hp}/{max_hp}"]
+        defense = getattr(ent, "defense", None)
+        atk = getattr(ent, "atk", None)
+        if atk is not None:
+            lines.append(f" ATK {atk}")
+        if defense is not None:
+            lines.append(f" DEF {defense}")
+        if combat_sys:
+            active = []
+            for status in ("burn", "slow", "stun", "shield", "buff", "evasion"):
+                if combat_sys.has_effect(ent, status):
+                    active.append(status)
+            if active:
+                lines.append(" " + ",".join(active)[:22])
+    elif chest:
+        state = "opened" if chest.opened else "sealed"
+        lines += [f" Chest: {state}", f" Gold: {getattr(chest, 'gold', 0)}"]
+    else:
+        names = {
+            "#": "Stone wall", ".": "Cave floor", STAIRS_DOWN: "Down stairs",
+            ALTAR: "Glowing altar", "^": "Trap", SHOP_CHAR: "Shop", "&": "Road marker",
+        }
+        if _ENV_EFFECTS_AVAILABLE:
+            names.update({TILE_WATER: "Cold water", TILE_BARREL: "Explosive barrel", TILE_RUBBLE: "Loose rubble"})
+        lines.append(" " + names.get(tile, f"Tile {tile}")[:22])
+    lines.append(" TAB/Space: close")
+    return lines
+
 # ============================================================
 #  Render
 # ============================================================
-def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, combat_sys, show_inv, show_skills, game_time, npc_enemies=None):
+def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, combat_sys, show_inv, show_skills, game_time, npc_enemies=None, fx_system=None, inspect_pos=None):
     try:
         import shutil
         term_w = shutil.get_terminal_size().columns
@@ -203,7 +371,17 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
     PANEL_W = 24
     MAP_W = max(40, term_w - 2 * PANEL_W)
     MAP_H = max(10, term_h - 10)
-    PBG = bg(14, 14, 20)
+    PBG = bg(THEME_PANEL_BG[0], THEME_PANEL_BG[1], THEME_PANEL_BG[2])
+    theme = _floor_theme(floor_num)
+    accent = theme["accent"]
+    render_now = time.time()
+
+    _has_effect = hasattr(combat_sys, 'has_effect') if combat_sys else False
+
+    def _ui_bar(value, maximum, width=20):
+        ratio = max(0.0, min(1.0, value / maximum)) if maximum else 0.0
+        filled = int(round(ratio * width))
+        return BLK * filled + SH1 * (width - filled), int(ratio * 100)
 
     buf = [chr(27) + '[H']
 
@@ -213,10 +391,10 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
     elif hp_ratio > 0.3: hr, hg, hb = 210, 190, 60
     else:                hr, hg, hb = 210, 60, 60
     bar_w = 20
-    filled = int(hp_ratio * bar_w)
+    hp_bar, hp_percent = _ui_bar(player.hp, player.max_hp, bar_w)
 
     mp_ratio = max(0.0, min(1.0, player.mp / player.max_mp)) if player.max_mp > 0 else 0
-    mp_filled = int(mp_ratio * bar_w)
+    mp_bar, mp_percent = _ui_bar(player.mp, player.max_mp, bar_w)
 
     # Title bar
     buf.append(
@@ -224,6 +402,7 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
         + fg(200, 200, 210) + bold() + 'SIMPLE CAVE ROGUELIKE' + rst()
         + bg(18, 18, 28)
         + f'  {fg(220, 190, 80)}Floor {floor_num}{rst()}'
+        + f'  {fg(*accent)}{theme["name"]}{rst()}'
         + f'  {fg(140, 140, 160)}Lv.{player.level}{rst()}'
         + f'  {fg(180, 180, 200)}{player.name}{rst()}'
         + ' ' * 30 + rst()
@@ -236,7 +415,7 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
         + fg(100, 200, 230) + ' HP '
         + f'{fg(hr, hg, hb)}{player.hp}/{player.max_hp} '
         + bg(hr // 3, hg // 3, hb // 3) + fg(hr, hg, hb)
-        + BLK * filled + SH1 * (bar_w - filled)
+        + hp_bar + f' {hp_percent:>3d}%'
         + rst()
     )
     if shield_active:
@@ -248,7 +427,7 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
             + f'  {fg(100, 200, 230)}MP '
             + f'{fg(80, 130, 255)}{player.mp}/{player.max_mp} '
             + bg(10, 10, 40) + fg(80, 130, 255)
-            + BLK * mp_filled + SH1 * (bar_w - mp_filled)
+            + mp_bar + f' {mp_percent:>3d}%'
             + rst()
             + ' ' * 10
         )
@@ -258,7 +437,7 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
             + f'  {fg(100, 200, 230)}MP '
             + f'{fg(80, 130, 255)}{player.mp}/{player.max_mp} '
             + bg(10, 10, 40) + fg(80, 130, 255)
-            + BLK * mp_filled + SH1 * (bar_w - mp_filled)
+            + mp_bar + f' {mp_percent:>3d}%'
             + rst()
             + ' ' * 10
         )
@@ -274,6 +453,10 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
         + f' {fg(255, 215, 0)}Gold:{player.inventory.gold}{rst()}'
         + ' ' * 10 + rst()
     )
+    active_effects = sorted(combat_sys.get_effects(player)) if combat_sys and hasattr(combat_sys, 'get_effects') else []
+    if active_effects:
+        buf.append(bg(18, 18, 28) + fg(210, 180, 255) + ' EFFECTS: ' +
+                   '  '.join(e.upper() for e in active_effects[:5]) + rst())
     buf.append(bg(18, 18, 28) + SH2 * 80 + rst())
 
     # ===== FIND NEAREST ENEMY =====
@@ -307,6 +490,7 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
     left.append(_pnl(f' Dodge:{int(player.dodge_chance*100)}% MP:{player.mp_regen:.1f}/s', fg(140, 140, 160)))
     left.append(_pnl(''))
     left.append(_pnl(' ' + chr(9472) * 13, fg(70, 70, 90)))
+    left.append(_pnl(' VISIBLE THREATS', fg(220, 120, 100) + bold()))
 
     # All visible enemies
     visible_enemies = []
@@ -324,14 +508,17 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
         left.append(_pnl(f' Enemies ({len(visible_enemies)})', fg(220, 80, 80) + bold()))
         for e in visible_enemies[:8]:
             ehp_r = e.hp / e.max_hp if e.max_hp > 0 else 0
-            ehp_f = int(ehp_r * 8)
-            bar = chr(9608) * ehp_f + chr(9617) * (8 - ehp_f)
-            name = e.name[:8].ljust(8)
-            left.append(_pnl(f' {name}{bar}', fg(220, 100, 100)))
+            ehp_f = int(ehp_r * 10)
+            bar = chr(9608) * ehp_f + chr(9617) * (10 - ehp_f)
+            name = ("[ELITE] " if getattr(e, 'is_elite', False) else "") + e.name
+            name = name[:18]
+            left.append(_pnl(f' {name}', fg(220, 120, 120)))
+            left.append(_pnl(f' HP {bar} {int(ehp_r * 100):>3d}%', fg(220, 100, 100)))
     else:
         left.append(_pnl(' No enemies visible', fg(70, 70, 90)))
 
     left.append(_pnl(' ' + chr(9472) * 13, fg(70, 70, 90)))
+    left.append(_pnl(f' PARTY ({sum(1 for a in allies if a.alive)})', fg(100, 220, 140) + bold()))
 
     # All visible allies
     visible_allies = [a for a in allies if a.alive and (a.x, a.y) in fov.visible]
@@ -341,25 +528,31 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
         CLASS_ICONS = {"swordsman": "W", "archer": "A", "mage": "M", "healer": "+", "rogue": "R"}
         for a in visible_allies[:8]:
             ahp_r = a.hp / a.max_hp if a.max_hp > 0 else 0
-            ahp_f = int(ahp_r * 8)
-            bar = chr(9608) * ahp_f + chr(9617) * (8 - ahp_f)
+            ahp_f = int(ahp_r * 10)
+            bar = chr(9608) * ahp_f + chr(9617) * (10 - ahp_f)
             if hasattr(a, 'class_name') and a.class_name:
                 icon = CLASS_ICONS.get(a.class_name, "?")
             elif hasattr(a, 'ally_type'):
                 icon = "S" if a.ally_type == "skeleton" else "?"
             else:
                 icon = "?"
-            # Use display name (already "Name (Class)") but truncate to 6 chars
             raw_name = a.name
-            short_name = raw_name[:6].ljust(6)
+            short_name = raw_name[:16]
             if getattr(a, 'is_infinite', False):
-                tag = f'{icon}{short_name}{bar} Lv{getattr(a, "level", "?")} \u221e'
+                tag = f'{icon} {short_name} Lv{getattr(a, "level", "?")} \u221e'
             elif hasattr(a, 'duration') and hasattr(a, 'spawn_time'):
                 remaining = max(0, int(a.duration - (time.time() - a.spawn_time)))
-                tag = f'{icon}{short_name}{bar} Lv{getattr(a, "level", "?")} {remaining}s'
+                tag = f'{icon} {short_name} Lv{getattr(a, "level", "?")} {remaining}s'
             else:
-                tag = f'{icon}{short_name}{bar} Lv{getattr(a, "level", "?")}'
+                tag = f'{icon} {short_name} Lv{getattr(a, "level", "?")}'
+            if getattr(a, 'equipment_score', 0) > 0:
+                tag += f' +{a.equipment_score}'
             left.append(_pnl(f' {tag}', fg(100, 200, 120)))
+            heal_note = ''
+            if time.time() - getattr(a, 'last_heal_time', -999) < 2.0:
+                heal_note = f" +{getattr(a, 'last_heal_amount', 0)}"
+            left.append(_pnl(f' HP {bar} {int(ahp_r * 100):>3d}%{heal_note}',
+                             fg(120, 255, 150) if heal_note else fg(80, 190, 110)))
     else:
         left.append(_pnl(' No allies visible', fg(70, 70, 90)))
     while len(left) < MAP_H:
@@ -367,7 +560,15 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
 
     # ===== RIGHT PANEL (Action Log) =====
     right = []
-    recent_log = log[-MAP_H:] if len(log) > MAP_H else log
+    if inspect_pos is not None:
+        for info in _inspect_lines(gm, player, monsters, bosses, chests, allies, npc_enemies, combat_sys, inspect_pos):
+            color = fg(*accent) + bold() if info.strip() == "Inspect" else fg(170, 175, 190)
+            right.append(_pnl(info[:PANEL_W - 1], color))
+        right.append(_pnl(' ' + chr(9472) * 13, fg(70, 70, 90)))
+        remaining = max(0, MAP_H - len(right))
+        recent_log = log[-remaining:] if len(log) > remaining else log
+    else:
+        recent_log = log[-MAP_H:] if len(log) > MAP_H else log
     for msg in recent_log:
         visible = msg[:PANEL_W - 1]
         msg_l = msg.lower()
@@ -406,6 +607,10 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
     vw, vh = MAP_W, MAP_H
     sx = max(0, player.x - vw // 2)
     sy = max(0, player.y - vh // 2)
+    if fx_system:
+        shake_x, shake_y = fx_system.get_shake_offset()
+        sx = max(0, sx + shake_x)
+        sy = max(0, sy + shake_y)
     ex = min(gm.w, sx + vw)
     ey = min(gm.h, sy + vh)
     if ex - sx < vw: sx = max(0, ex - vw)
@@ -419,10 +624,12 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
             br = fov.visible.get((x, y))
             exp = (x, y) in fov.explored
 
-            if x == player.x and y == player.y:
+            if inspect_pos == (x, y) and (br is not None or exp):
+                line += bg(*accent) + fg(5, 8, 10) + bold() + _tile_glyph(t, x, y, gm, game_time) + rst()
+            elif x == player.x and y == player.y:
                 line += bg(20, 40, 60) + fg(80, 220, 255) + bold() + '@' + rst()
             elif br is not None:
-                b = max(0.08, br)
+                b = max(0.08, br) * _light_for_tile(x, y, player, t, theme, game_time)
                 mob = next((m for m in monsters if m.x == x and m.y == y and m.alive), None)
                 boss = next((b_ for b_ in bosses if b_.x == x and b_.y == y and b_.alive), None)
                 ally = next((a for a in allies if a.x == x and a.y == y and a.alive), None)
@@ -430,14 +637,32 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
                 chest = next((c for c in chests if c.x == x and c.y == y), None)
                 popups_here = combat_sys.get_popups_at(x, y)
                 proj_here = combat_sys.get_projectile_at(x, y)
+                particles_here = fx_system.particles_at(x, y, render_now) if fx_system else []
+                flash_rgb = fx_system.flash_at(x, y, render_now) if fx_system else None
 
-                if proj_here:
+                if particles_here and _FX_AVAILABLE:
+                    line += render_particle(particles_here[-1], brightness=b)
+                elif proj_here:
                     pr, pg, pb = map(int, proj_here.color.split(","))
                     line += bg(int(pr * 0.2 * b), int(pg * 0.2 * b), int(pb * 0.2 * b))
                     line += fg(int(pr * b), int(pg * b), int(pb * b))
                     line += bold() + proj_here.char + rst()
                 elif ally:
-                    if ally.is_infinite:
+                    if getattr(ally, 'is_hired', False):
+                        # Hired NPCs use role initials so the party is readable
+                        # directly on the map, without opening the side panel.
+                        role_icons = {
+                            'swordsman': ('W', (255, 220, 100)),
+                            'archer': ('A', (200, 255, 100)),
+                            'mage': ('M', (150, 180, 255)),
+                            'healer': ('+', (100, 255, 200)),
+                            'rogue': ('R', (220, 100, 255)),
+                        }
+                        icon, rgb = role_icons.get(getattr(ally, 'class_name', ''), ('N', (150, 255, 180)))
+                        line += bg(int(10 * b), int(25 * b), int(18 * b))
+                        line += fg(int(rgb[0] * b), int(rgb[1] * b), int(rgb[2] * b))
+                        line += bold() + icon + rst()
+                    elif getattr(ally, 'is_infinite', False):
                         line += bg(int(10 * b), int(30 * b), int(10 * b))
                         line += fg(int(80 * b), int(255 * b), int(80 * b))
                         line += bold() + 'S' + rst()
@@ -453,8 +678,20 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
                         line += fg(int(pr * b), int(pg * b), int(pb * b))
                         line += bold() + mob.char + rst()
                     else:
-                        line += bg(int(50 * b), int(15 * b), int(15 * b))
-                        line += fg(int(230 * b), int(70 * b), int(70 * b))
+                        # Wound glow: dark-red bg intensity scales with missing HP
+                        hp_ratio_m = mob.hp / mob.max_hp if mob.max_hp > 0 else 0
+                        wound = max(0.15, 1.0 - hp_ratio_m)
+                        line += bg(int(50 * wound * b), int(10 * wound * b), int(10 * wound * b))
+                        mr, mg, mb = mob.rgb
+                        # Status effect colors (priority: stun > burn > slow)
+                        if _has_effect and combat_sys.has_effect(mob, "stun"):
+                            line += fg(int(255 * b), int(220 * b), int(50 * b))
+                        elif _has_effect and combat_sys.has_effect(mob, "burn"):
+                            line += fg(int(255 * b), int(140 * b), int(30 * b))
+                        elif _has_effect and combat_sys.has_effect(mob, "slow"):
+                            line += fg(int(80 * b), int(200 * b), int(255 * b))
+                        else:
+                            line += fg(int(mr * b), int(mg * b), int(mb * b))
                         line += bold() + mob.char + rst()
                 elif boss:
                     if popups_here:
@@ -464,8 +701,18 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
                         line += fg(int(pr * b), int(pg * b), int(pb * b))
                         line += bold() + boss.char + rst()
                     else:
+                        # Distinct purple background for bosses
                         line += bg(int(60 * b), int(10 * b), int(60 * b))
-                        line += fg(int(255 * b), int(50 * b), int(255 * b))
+                        boss_r, boss_g, boss_b = boss.rgb
+                        # Status effect colors (priority: stun > burn > slow)
+                        if _has_effect and combat_sys.has_effect(boss, "stun"):
+                            line += fg(int(255 * b), int(220 * b), int(50 * b))
+                        elif _has_effect and combat_sys.has_effect(boss, "burn"):
+                            line += fg(int(255 * b), int(140 * b), int(30 * b))
+                        elif _has_effect and combat_sys.has_effect(boss, "slow"):
+                            line += fg(int(80 * b), int(200 * b), int(255 * b))
+                        else:
+                            line += fg(int(boss_r * b), int(boss_g * b), int(boss_b * b))
                         line += bold() + boss.char + rst()
                 elif npc_e:
                     # NPC enemy — red tint
@@ -483,9 +730,10 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
                 elif t == '#':
                     wch = gm.wall_char(x, y)
                     # Base stone — cold dungeon granite with slight purple undertone
-                    wr = int(68 * b)
-                    wg = int(62 * b)
-                    wb = int(78 * b)
+                    stone_rgb = theme["stone"]
+                    wr = int(stone_rgb[0] * b)
+                    wg = int(stone_rgb[1] * b)
+                    wb = int(stone_rgb[2] * b)
                     # Top-lit: walls facing up catch light
                     up_open = not gm.is_wall(x, y - 1)
                     down_open = not gm.is_wall(x, y + 1)
@@ -547,13 +795,17 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
                         # Stone floor with cracks and variation
                         fh = (x * 3 + y * 7) % 11
                         if (x + y) % 2 == 0:
-                            line += bg(int(16 * b), int(14 * b), int(18 * b))
-                            line += fg(int(50 + fh * 2) * b // 1, int(46 + fh) * b // 1, int(58 + fh) * b // 1)
-                            line += DOT
+                            floor_bg = theme["floor_bg"]
+                            floor_fg = _rgb_shift(theme["floor_fg"], (fh * 2, fh, fh))
+                            line += bg(*_rgb_scale(floor_bg, b))
+                            line += fg(*_rgb_scale(floor_fg, b))
+                            line += _tile_glyph(t, x, y, gm, game_time)
                         else:
-                            line += bg(int(12 * b), int(10 * b), int(14 * b))
-                            line += fg(int(38 + fh) * b // 1, int(34 + fh) * b // 1, int(42 + fh) * b // 1)
-                            line += DOT
+                            floor_bg = _rgb_shift(theme["floor_bg"], (-4, -4, -4))
+                            floor_fg = _rgb_shift(theme["floor_fg"], (-8 + fh, -8 + fh, -8 + fh))
+                            line += bg(*_rgb_scale(floor_bg, b))
+                            line += fg(*_rgb_scale(floor_fg, b))
+                            line += _tile_glyph(t, x, y, gm, game_time)
                         line += rst()
                 elif t == STAIRS_DOWN:
                     popups_here = combat_sys.get_popups_at(x, y)
@@ -587,6 +839,29 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
                         line += bg(int(30 * b), int(25 * b), int(40 * b))
                         line += fg(int(200 * b), int(180 * b), int(255 * b))
                         line += bold() + '*' + rst()
+                elif _ENV_EFFECTS_AVAILABLE and t == TILE_WATER:
+                    line += bg(*_rgb_scale((8, 18, 34), b))
+                    line += fg(*_rgb_scale(theme["water"], b))
+                    line += _tile_glyph(t, x, y, gm, game_time) + rst()
+                elif _ENV_EFFECTS_AVAILABLE and t == TILE_BARREL:
+                    if flash_rgb:
+                        line += bg(*_rgb_scale(flash_rgb, 0.35 * b))
+                    else:
+                        line += bg(int(40 * b), int(25 * b), int(8 * b))
+                    line += fg(*_rgb_scale(theme["hazard"], b))
+                    line += bold() + '!' + rst()
+                elif _ENV_EFFECTS_AVAILABLE and t == TILE_RUBBLE:
+                    line += bg(int(20 * b), int(18 * b), int(16 * b))
+                    line += fg(int(80 * b), int(75 * b), int(70 * b))
+                    line += '\u2591' + rst()
+                elif t == SHOP_CHAR:
+                    line += bg(int(20 * b), int(30 * b), int(15 * b))
+                    line += fg(int(255 * b), int(215 * b), int(0 * b))
+                    line += bold() + '$' + rst()
+                elif t == '&':
+                    line += bg(int(20 * b), int(20 * b), int(25 * b))
+                    line += fg(int(120 * b), int(120 * b), int(150 * b))
+                    line += '&' + rst()
                 else:
                     line += ' '
             elif exp:
@@ -595,15 +870,25 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
                 if mob or boss:
                     line += ' '
                 elif t == '#':
-                    line += bg(10, 9, 14) + fg(38, 35, 48) + gm.wall_char(x, y) + rst()
+                    line += bg(*theme["fog"]) + fg(*_rgb_scale(theme["stone"], 0.45)) + gm.wall_char(x, y) + rst()
                 elif t == '.':
-                    line += bg(10, 10, 13) + fg(30, 28, 35) + DOT + rst()
+                    line += bg(*theme["fog"]) + fg(*_rgb_scale(theme["floor_fg"], 0.45)) + _tile_glyph(t, x, y, gm, game_time) + rst()
                 elif t == STAIRS_DOWN:
                     line += bg(10, 10, 13) + fg(70, 60, 25) + ARROW + rst()
+                elif _ENV_EFFECTS_AVAILABLE and t == TILE_WATER:
+                    line += bg(6, 10, 18) + fg(20, 50, 100) + '\u2248' + rst()
+                elif _ENV_EFFECTS_AVAILABLE and t == TILE_BARREL:
+                    line += bg(16, 10, 4) + fg(80, 55, 18) + '!' + rst()
+                elif _ENV_EFFECTS_AVAILABLE and t == TILE_RUBBLE:
+                    line += bg(10, 9, 8) + fg(40, 38, 35) + '\u2591' + rst()
+                elif t == SHOP_CHAR:
+                    line += bg(10, 14, 8) + fg(100, 85, 10) + '$' + rst()
+                elif t == '&':
+                    line += bg(10, 10, 12) + fg(55, 55, 70) + '&' + rst()
                 else:
                     line += ' '
             else:
-                line += bg(8, 8, 10) + ' ' + rst()
+                line += bg(*theme["void"]) + ' ' + rst()
 
         map_lines.append(line)
 
@@ -657,7 +942,7 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
         + fg(70, 70, 90) + '|'
         + action_hint
         + fg(70, 70, 90) + '|'
-        + fg(160, 160, 180) + ' E:inv Del:drop Z-B:skills '
+        + fg(160, 160, 180) + ' E:inventory  Del:drop  TAB:inspect  Z-B:skills '
         + ' ' * 30 + rst()
     )
     buf.append('')
@@ -680,7 +965,7 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
 #  Panel helper (must be defined before render_city)
 # ============================================================
 def _pnl(text, fg_c=None):
-    PBG = bg(14, 14, 20)
+    PBG = bg(THEME_PANEL_BG[0], THEME_PANEL_BG[1], THEME_PANEL_BG[2])
     PANEL_W = 24
     if fg_c:
         return PBG + fg_c + text.ljust(PANEL_W) + rst()
@@ -691,7 +976,7 @@ def _pnl(text, fg_c=None):
 #  City Render
 # ============================================================
 def render_city(gm, player, shop_items, floor_num, log, shop_cursor,
-                show_shop, game_time, shop_name=""):
+                show_shop, game_time, shop_name="", party_allies=None):
     try:
         import shutil
         term_w = shutil.get_terminal_size().columns
@@ -699,7 +984,7 @@ def render_city(gm, player, shop_items, floor_num, log, shop_cursor,
     except Exception:
         term_w, term_h = 120, 40
 
-    PBG = bg(14, 14, 20)
+    PBG = bg(THEME_PANEL_BG[0], THEME_PANEL_BG[1], THEME_PANEL_BG[2])
     buf = [chr(27) + '[H']
 
     # Title
@@ -796,6 +1081,7 @@ def render_city(gm, player, shop_items, floor_num, log, shop_cursor,
     buf.append(
         bg(18, 18, 28)
         + fg(220, 200, 80) + f' $:Shop  *:Heal  >:Descend '
+        + fg(180, 180, 80) + 'M:Meta '
         + fg(140, 140, 160) + '| SPACE: interact'
         + ' ' * 30 + rst()
     )
@@ -807,25 +1093,33 @@ def render_city(gm, player, shop_items, floor_num, log, shop_cursor,
         buf.append(fg(60, 60, 80) + '  ' + BOX_TL + BOX_H * 50 + BOX_TR + rst())
         for i, item in enumerate(shop_items):
             is_sel = (shop_cursor == i)
-            price = 50 + floor_num * 20 + i * 10
+            is_ally_offer = isinstance(item, dict) and item.get("kind") == "ally"
+            price = int(item.get("cost", 0)) if is_ally_offer else CITY_NPC_BASE_PRICE + floor_num * CITY_PRICE_FLOOR_MULT + i * CITY_PRICE_INDEX_MULT
             num = str(i + 1)
             if is_sel:
                 prefix = f'>>>{num}'
             else:
                 prefix = f'  {num}'
-            rc = rarity_color(item.rarity)
+            rc = fg(150, 255, 190) if is_ally_offer else rarity_color(item.rarity)
+            item_name = (f"{item['name']} [{item['class_name']}]" if is_ally_offer else item.name)
             if is_sel:
                 buf.append(fg(60, 60, 80) + '  ' + BOX_V + rst()
-                           + fg(255, 255, 100) + f' {prefix} {rc}{item.name[:18]:<18s}{rst()}'
+                           + fg(255, 255, 100) + f' {prefix} {rc}{item_name[:18]:<18s}{rst()}'
                            + fg(255, 215, 0) + f'{price:>5d}g' + rst()
                            + fg(60, 60, 80) + ' ' + BOX_V + rst())
             else:
                 buf.append(fg(60, 60, 80) + '  ' + BOX_V + rst()
-                           + fg(140, 140, 160) + f' {prefix} {rc}{item.name[:18]:<18s}{rst()}'
+                           + fg(140, 140, 160) + f' {prefix} {rc}{item_name[:18]:<18s}{rst()}'
                            + fg(200, 180, 80) + f'{price:>5d}g' + rst()
                            + fg(60, 60, 80) + ' ' + BOX_V + rst())
         buf.append(fg(60, 60, 80) + '  ' + BOX_BL + BOX_H * 50 + BOX_BR + rst())
-        buf.append(fg(140, 140, 160) + '  1-9: select | Enter: buy | ESC: close' + rst())
+        if any(isinstance(item, dict) and item.get("kind") == "ally" for item in shop_items):
+            hired = party_allies or []
+            names = ", ".join(a.name.split(" (")[0] for a in hired) or "none"
+            buf.append(fg(140, 220, 170) + f'  Party {len(hired)}/{MAX_PARTY_SIZE}: {names[:44]}' + rst())
+            buf.append(fg(140, 140, 160) + '  1-9: select | Space: hire | Delete: dismiss last | E/ESC: close' + rst())
+        else:
+            buf.append(fg(140, 140, 160) + '  1-9: select | Space: buy | E/ESC: close' + rst())
 
     # Hire overlay
     # Pad
@@ -962,11 +1256,11 @@ def render_inventory(player, inv_cur, inv_col):
         if inv_col == 0:
             t = sel_item.item_type
             if t in ("weapon", "helmet", "chest", "legs", "boots", "gloves", "necklace", "ring", "cape"):
-                act = "[Enter] Equip"
-            elif t == "consumable": act = "[Enter] Use"
-            elif t == "skill_book": act = "[Enter] Learn"
+                act = "[Space] Equip"
+            elif t == "consumable": act = "[Space] Use"
+            elif t == "skill_book": act = "[Space] Learn"
         elif inv_col == 1:
-            act = "[Enter] Unequip"
+            act = "[Space] Unequip"
         if act:
             buf.append(f"  {fg(60,60,80)}{BOX_V}{rst()} {fg(80,200,80)}{act:<{card_w-4}}{rst()}{fg(60,60,80)}{BOX_V}{rst()}")
     else:
@@ -975,7 +1269,7 @@ def render_inventory(player, inv_cur, inv_col):
 
     # Footer
     buf.append("")
-    buf.append(f"  {dim()}WASD: move | Enter: equip/use | Del: drop | E: close{rst()}")
+    buf.append(f"  {dim()}WASD: move | Space: equip/use | Del: drop | E: close{rst()}")
 
     # Center content
     try:
@@ -1001,14 +1295,57 @@ def run_game(class_name: str, player_name: str):
     player = Player(0, 0, class_name)
     player.name = player_name
 
+    # Run tracker integration
+    tracker = None
+    if _RUN_STATS_AVAILABLE:
+        try:
+            tracker = RunTracker()
+            tracker.start()
+        except Exception:
+            tracker = None
+
+    # Meta-progression: apply bonuses
+    meta = None
+    if _META_AVAILABLE:
+        try:
+            meta = MetaProgression()
+            apply_meta_bonuses(player, meta)
+        except Exception:
+            meta = None
+
     floor_num = 1
     gm, monsters, bosses, chests, rooms, npc_enemies = gen_floor(floor_num, player)
     fov = FOV(MAP_WIDTH, MAP_HEIGHT)
     combat = CombatSystem()
+    fx_system = FXSystem() if _FX_AVAILABLE else None
+    combat.fx = fx_system
     inp = InputState()
     allies: List[Ally] = []
 
-    log = [f"Welcome to floor {floor_num}!"]
+    # Start every run with a small random party.  There can never be two
+    # healers: the player counts as the healer when playing that class.
+    # Healer is reserved for the player: NPC companions never duplicate it.
+    party_pool = ["swordsman", "archer", "mage", "rogue"]
+    random.shuffle(party_pool)
+    starter_party_size = random.randint(1, 2)
+    starter_party = party_pool[:starter_party_size]
+    occupied_start = {(player.x, player.y)}
+    for index, ally_class in enumerate(starter_party):
+        spawn_pos = next(((player.x + dx, player.y + dy)
+                          for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1),
+                                         (2, 0), (-2, 0), (0, 2), (0, -2))
+                          if gm.walkable(player.x + dx, player.y + dy) and
+                          (player.x + dx, player.y + dy) not in occupied_start),
+                         (player.x, player.y))
+        ally = NPCAlly(spawn_pos[0], spawn_pos[1], ally_class, floor_num, "")
+        ally.is_hired = True
+        ally.hire_cost = 0
+        ally._player_ref = player
+        allies.append(ally)
+        occupied_start.add((ally.x, ally.y))
+
+    party_names = ", ".join(a.name for a in allies)
+    log = [f"Welcome to floor {floor_num}!", f"Your party joins you: {party_names}."]
     show_inv = False
     inv_cursor = 0
     inv_col = 0
@@ -1020,6 +1357,8 @@ def run_game(class_name: str, player_name: str):
     inv_nav_cd = 0.0
     last_frame = time.time()
     last_move_dx, last_move_dy = 1, 0
+    inspect_mode = False
+    inspect_pos = (player.x, player.y)
 
     # City state
     in_city = False
@@ -1029,6 +1368,10 @@ def run_game(class_name: str, player_name: str):
     shop_cursor = 0
     shop_just_closed = False
     boss_killed = False
+    bosses_killed_count = 0
+    already_rewarded_boss_ids: Set[int] = set()
+    loot_awarded_ids: Set[int] = set()
+    victory_flag = False
 
     def enter_city():
         nonlocal in_city, city_shops, city_shop_items, gm, monsters, bosses, chests, npc_enemies
@@ -1041,6 +1384,20 @@ def run_game(class_name: str, player_name: str):
         gm.load(tiles, walls)
         player.x, player.y = pstart
         city_shops = shops
+        # The tavern is rebuilt each visit: three randomized recruits are available.
+        tavern_pos = next(((x, y) for y in range(2, gm.h - 2) for x in range(2, gm.w - 2)
+                           if gm.walkable(x, y) and (x, y) != pstart and
+                           all((x, y) != (s["x"], s["y"]) for s in city_shops)), (pstart[0] + 2, pstart[1]))
+        tx, ty = tavern_pos
+        gm.tiles[ty][tx] = "$"
+        recruit_classes = [("swordsman", "Bran", 90), ("archer", "Mira", 100),
+                           ("mage", "Oren", 125), ("healer", "Sela", 110),
+                           ("rogue", "Vex", 115)]
+        random.shuffle(recruit_classes)
+        tavern_items = [{"kind": "ally", "class_name": cls, "name": name,
+                         "cost": cost + floor_num * 15}
+                        for cls, name, cost in recruit_classes[:3]]
+        city_shops.append({"x": tx, "y": ty, "name": "TAVERN - HIRE ALLIES", "items": tavern_items})
         city_shop_items = []
         monsters = []
         bosses = []
@@ -1050,18 +1407,52 @@ def run_game(class_name: str, player_name: str):
 
     def exit_city():
         nonlocal in_city, floor_num, gm, monsters, bosses, chests, npc_enemies, fov
-        nonlocal allies, boss_killed
+        nonlocal allies, boss_killed, victory_flag
         in_city = False
         floor_num += 1
         if floor_num > 10:
             show_victory(floor_num - 1, player.turns, player.monsters_killed)
             player.alive = False
+            victory_flag = True
             return
         gm, monsters, bosses, chests, rooms, npc_enemies = gen_floor(floor_num, player)
         fov = FOV(MAP_WIDTH, MAP_HEIGHT)
+        hired = [a for a in allies if getattr(a, "is_hired", False) and a.alive]
         allies.clear()
+        allies.extend(hired[:MAX_PARTY_SIZE])
+        occupied = {(player.x, player.y)}
+        for ally in allies:
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                if gm.walkable(player.x + dx, player.y + dy) and (player.x + dx, player.y + dy) not in occupied:
+                    ally.x, ally.y = player.x + dx, player.y + dy
+                    occupied.add((ally.x, ally.y))
+                    break
         boss_killed = False
+        already_rewarded_boss_ids.clear()
         log.append(f"Descended to floor {floor_num}!")
+
+    def distribute_unclaimed_chests():
+        """Resolve unopened chests at the floor boundary for the party."""
+        recipients = [a for a in allies if getattr(a, "is_hired", False) and a.alive]
+        if not recipients:
+            return
+        cursor = 0
+        claimed = 0
+        for chest in chests:
+            if chest.opened:
+                continue
+            chest.open()
+            for item in chest.items:
+                recipient = recipients[cursor % len(recipients)]
+                if recipient.receive_loot(item):
+                    log.append(f"{recipient.name} claims {item.name} from an abandoned chest.")
+                    cursor += 1
+                elif player.inventory.add_item(item):
+                    log.append(f"You recover {item.name} from an abandoned chest.")
+            player.inventory.gold += chest.gold
+            claimed += 1
+        if claimed:
+            log.append(f"Party secured loot from {claimed} unopened chest(s).")
 
     try:
         while player.alive:
@@ -1069,6 +1460,8 @@ def run_game(class_name: str, player_name: str):
             dt = now - last_frame
             last_frame = now
             game_time += dt
+            if fx_system:
+                fx_system.update(now)
 
             keys = inp.read()
             if "quit" in keys:
@@ -1090,86 +1483,27 @@ def run_game(class_name: str, player_name: str):
                             render_inventory(player, inv_cursor, inv_col)
                     continue
 
+                # Meta-progression shop (M key)
+                if "meta_shop" in keys and _META_AVAILABLE and meta is not None:
+                    try:
+                        if show_shop:
+                            show_shop = False
+                        open_meta_shop(player, meta)
+                        sys.stdout.write("\x1b[2J\x1b[H")
+                        sys.stdout.flush()
+                    except Exception:
+                        pass
+                    continue
+
                 if show_inv:
-                    # Inventory in city (same as dungeon)
-                    GRID_COLS = 6
-                    GRID_SLOTS = player.inventory.max_slots
-                    MAX_EQ = 10
-                    inv_moved = False
-                    if game_time - inv_nav_cd >= 0.08:
-                        if inp.is_held("up") or "up" in keys:
-                            if inv_col == 0: inv_cursor = (inv_cursor - GRID_COLS) % GRID_SLOTS
-                            elif inv_col == 1: inv_cursor = (inv_cursor - 1) % MAX_EQ
-                            render_inventory(player, inv_cursor, inv_col)
-                            inv_moved = True
-                        elif inp.is_held("down") or "down" in keys:
-                            if inv_col == 0: inv_cursor = (inv_cursor + GRID_COLS) % GRID_SLOTS
-                            elif inv_col == 1: inv_cursor = (inv_cursor + 1) % MAX_EQ
-                            render_inventory(player, inv_cursor, inv_col)
-                            inv_moved = True
-                        elif inp.is_held("left") or "left" in keys:
-                            if inv_col == 0:
-                                if inv_cursor % GRID_COLS == 0:
-                                    inv_col = 1; inv_cursor = min(inv_cursor // GRID_COLS, MAX_EQ - 1)
-                                else: inv_cursor -= 1
-                            elif inv_col == 1:
-                                inv_col = 0; inv_cursor = min(inv_cursor, GRID_SLOTS - 1)
-                            render_inventory(player, inv_cursor, inv_col)
-                            inv_moved = True
-                        elif inp.is_held("right") or "right" in keys:
-                            if inv_col == 0:
-                                if inv_cursor % GRID_COLS == GRID_COLS - 1:
-                                    inv_col = 1; inv_cursor = min(inv_cursor // GRID_COLS, MAX_EQ - 1)
-                                else: inv_cursor += 1
-                            elif inv_col == 1:
-                                inv_col = 0; inv_cursor = min(inv_cursor, GRID_SLOTS - 1)
-                            render_inventory(player, inv_cursor, inv_col)
-                            inv_moved = True
-                        if inv_moved: inv_nav_cd = game_time
-                    if "action" in keys:
-                        if inv_col == 0 and 0 <= inv_cursor < player.inventory.max_slots:
-                            item = player.inventory.get_item(inv_cursor)
-                            if item:
-                                itype = item.item_type
-                                if itype in ("weapon", "helmet", "chest", "legs", "boots", "gloves", "necklace", "cape"):
-                                    slot = Inventory.TYPE_TO_SLOT.get(itype, itype)
-                                    player.inventory.equip(inv_cursor, slot)
-                                    player._recalc_stats()
-                                    log.append(f"Equipped {item.name} [{item.rarity}]")
-                                elif itype == "ring":
-                                    # Find first empty ring slot
-                                    if not player.inventory.equipment.get("ring1"):
-                                        player.inventory.equip(inv_cursor, "ring1")
-                                    elif not player.inventory.equipment.get("ring2"):
-                                        player.inventory.equip(inv_cursor, "ring2")
-                                    else:
-                                        player.inventory.equip(inv_cursor, "ring1")
-                                    player._recalc_stats()
-                                    log.append(f"Equipped {item.name} [{item.rarity}]")
-                                elif itype == "consumable":
-                                    ok, msg = player.inventory.use_item(inv_cursor)
-                                    log.append(msg)
-                                    if item.consumable_effect == "heal": player.heal(item.consumable_value)
-                                    elif item.consumable_effect == "mana": player.restore_mp(item.consumable_value)
-                        elif inv_col == 1:
-                            # Unequip
-                            eq_slots = player.inventory.EQUIP_SLOTS
-                            if 0 <= inv_cursor < len(eq_slots):
-                                slot = eq_slots[inv_cursor]
-                                old_item = player.inventory.equipment.get(slot)
-                                if old_item:
-                                    player.inventory.equipment[slot] = None
-                                    player.inventory.add_item(old_item)
-                                    player._recalc_stats()
-                                    log.append(f"Unequipped {old_item.name}")
-                        render_inventory(player, inv_cursor, inv_col)
-                    if "delete" in keys:
-                        if inv_col == 0 and 0 <= inv_cursor < player.inventory.max_slots:
-                            item = player.inventory.get_item(inv_cursor)
-                            if item:
-                                player.inventory.remove_item(inv_cursor)
-                                log.append(f"Dropped {item.name}")
-                                render_inventory(player, inv_cursor, inv_col)
+                    # Merge held + pressed directional keys for inventory nav
+                    inv_keys = set(keys)
+                    for action in ("up", "down", "left", "right"):
+                        if inp.is_held(action):
+                            inv_keys.add(action)
+                    inv_cursor, inv_col, inv_nav_cd = handle_inventory_input(
+                        player, inv_keys, game_time, inv_cursor, inv_col, inv_nav_cd,
+                        log, render_inventory)
                     continue
 
                 # Shop navigation
@@ -1179,31 +1513,59 @@ def run_game(class_name: str, player_name: str):
                         if shop["x"] == player.x and shop["y"] == player.y:
                             current_shop_name = shop["name"]
                             break
-                    if "quit" in keys or "action" in keys:
+                    if "quit" in keys:
                         show_shop = False
                         shop_just_closed = True
                     # Number keys 1-9 to select item
                     for i in range(9):
                         if f"hotkey{i}" in keys and i < len(city_shop_items):
                             shop_cursor = i
-                    if "enter" in keys and city_shop_items and 0 <= shop_cursor < len(city_shop_items):
+                    if "action" in keys and city_shop_items and 0 <= shop_cursor < len(city_shop_items):
                         item = city_shop_items[shop_cursor]
-                        rarity_mult = {"common": 1.0, "uncommon": 1.3, "rare": 1.8, "epic": 2.5, "mythic": 4.0, "legendary": 6.0}.get(item.rarity, 1.0)
-                        price = int((50 + floor_num * 20 + shop_cursor * 10) * rarity_mult)
-                        if player.inventory.gold >= price:
-                            player.inventory.gold -= price
-                            if player.inventory.add_item(item):
+                        if isinstance(item, dict) and item.get("kind") == "ally":
+                            hired = [a for a in allies if getattr(a, "is_hired", False) and a.alive]
+                            if len(hired) >= MAX_PARTY_SIZE:
+                                log.append(f"Party is full ({MAX_PARTY_SIZE})!")
+                            elif player.inventory.gold < item["cost"]:
+                                log.append("Not enough gold!")
+                            else:
+                                player.inventory.gold -= item["cost"]
+                                recruit = NPCAlly(player.x + 1, player.y, item["class_name"], floor_num, item["name"])
+                                recruit.is_hired = True
+                                recruit.hire_cost = item["cost"]
+                                recruit._player_ref = player
+                                allies.append(recruit)
                                 city_shop_items.pop(shop_cursor)
-                                log.append(f"Bought {item.name} for {price}g!")
+                                log.append(f"{recruit.name} joined the party for {item['cost']}g!")
                                 if not city_shop_items:
                                     show_shop = False
                                 elif shop_cursor >= len(city_shop_items):
-                                    shop_cursor = max(0, len(city_shop_items) - 1)
-                            else:
-                                player.inventory.gold += price
-                                log.append("Inventory full!")
+                                    shop_cursor = len(city_shop_items) - 1
                         else:
-                            log.append("Not enough gold!")
+                            rarity_mult = {"common": 1.0, "uncommon": 1.3, "rare": 1.8, "epic": 2.5, "mythic": 4.0, "legendary": 6.0}.get(item.rarity, 1.0)
+                            price = int((CITY_NPC_BASE_PRICE + floor_num * CITY_PRICE_FLOOR_MULT + shop_cursor * CITY_PRICE_INDEX_MULT) * rarity_mult)
+                            if player.inventory.gold >= price:
+                                player.inventory.gold -= price
+                                if player.inventory.add_item(item):
+                                    city_shop_items.pop(shop_cursor)
+                                    log.append(f"Bought {item.name} for {price}g!")
+                                    if not city_shop_items:
+                                        show_shop = False
+                                    elif shop_cursor >= len(city_shop_items):
+                                        shop_cursor = max(0, len(city_shop_items) - 1)
+                                else:
+                                    player.inventory.gold += price
+                                    log.append("Inventory full!")
+                            else:
+                                log.append("Not enough gold!")
+                    if "delete" in keys and city_shop_items and any(isinstance(i, dict) and i.get("kind") == "ally" for i in city_shop_items):
+                        hired = [a for a in allies if getattr(a, "is_hired", False) and a.alive]
+                        if hired:
+                            fired = hired[-1]
+                            allies.remove(fired)
+                            log.append(f"{fired.name} was dismissed.")
+                        else:
+                            log.append("No hired allies to dismiss.")
 
                 # City movement
                 dx, dy = 0, 0
@@ -1258,7 +1620,8 @@ def run_game(class_name: str, player_name: str):
                             current_shop_name = shop["name"]
                             break
                 render_city(gm, player, city_shop_items, floor_num, log,
-                            shop_cursor, show_shop, game_time, current_shop_name)
+                            shop_cursor, show_shop, game_time, current_shop_name,
+                            [a for a in allies if getattr(a, "is_hired", False) and a.alive])
                 time.sleep(0.03)
                 continue
 
@@ -1274,81 +1637,43 @@ def run_game(class_name: str, player_name: str):
                 continue
 
             if show_inv:
-                GRID_COLS = 6
-                GRID_SLOTS = player.inventory.max_slots
-                MAX_EQ = 10
-                inv_moved = False
-                if game_time - inv_nav_cd >= 0.08:
-                    if inp.is_held("up") or "up" in keys:
-                        if inv_col == 0: inv_cursor = (inv_cursor - GRID_COLS) % GRID_SLOTS
-                        elif inv_col == 1: inv_cursor = (inv_cursor - 1) % MAX_EQ
-                        render_inventory(player, inv_cursor, inv_col)
-                        inv_moved = True
-                    elif inp.is_held("down") or "down" in keys:
-                        if inv_col == 0: inv_cursor = (inv_cursor + GRID_COLS) % GRID_SLOTS
-                        elif inv_col == 1: inv_cursor = (inv_cursor + 1) % MAX_EQ
-                        render_inventory(player, inv_cursor, inv_col)
-                        inv_moved = True
-                    elif inp.is_held("left") or "left" in keys:
-                        if inv_col == 0:
-                            if inv_cursor % GRID_COLS == 0:
-                                inv_col = 1; inv_cursor = min(inv_cursor // GRID_COLS, MAX_EQ - 1)
-                            else: inv_cursor -= 1
-                        elif inv_col == 1:
-                            inv_col = 0; inv_cursor = min(inv_cursor, GRID_SLOTS - 1)
-                        render_inventory(player, inv_cursor, inv_col)
-                        inv_moved = True
-                    elif inp.is_held("right") or "right" in keys:
-                        if inv_col == 0:
-                            if inv_cursor % GRID_COLS == GRID_COLS - 1:
-                                inv_col = 1; inv_cursor = min(inv_cursor // GRID_COLS, MAX_EQ - 1)
-                            else: inv_cursor += 1
-                        elif inv_col == 1:
-                            inv_col = 0; inv_cursor = min(inv_cursor, GRID_SLOTS - 1)
-                        render_inventory(player, inv_cursor, inv_col)
-                        inv_moved = True
-                    if inv_moved: inv_nav_cd = game_time
+                inv_keys = set(keys)
+                for action in ("up", "down", "left", "right"):
+                    if inp.is_held(action):
+                        inv_keys.add(action)
+                inv_cursor, inv_col, inv_nav_cd = handle_inventory_input(
+                    player, inv_keys, game_time, inv_cursor, inv_col, inv_nav_cd,
+                    log, render_inventory)
+                continue
+
+            if "tab" in keys:
+                inspect_mode = not inspect_mode
+                inspect_pos = (player.x, player.y)
+
+            if inspect_mode:
+                ix, iy = inspect_pos
+                mdx, mdy = 0, 0
+                if inp.is_held("up"):
+                    mdy = -1
+                elif inp.is_held("down"):
+                    mdy = 1
+                elif inp.is_held("left"):
+                    mdx = -1
+                elif inp.is_held("right"):
+                    mdx = 1
+                if mdx or mdy:
+                    inspect_pos = (
+                        max(0, min(gm.w - 1, ix + mdx)),
+                        max(0, min(gm.h - 1, iy + mdy)),
+                    )
+                    time.sleep(0.04)
                 if "action" in keys:
-                    if inv_col == 0 and 0 <= inv_cursor < player.inventory.max_slots:
-                        item = player.inventory.get_item(inv_cursor)
-                        if item:
-                            itype = item.item_type
-                            if itype in ("weapon", "helmet", "chest", "legs", "boots", "gloves", "necklace", "cape"):
-                                slot = Inventory.TYPE_TO_SLOT.get(itype, itype)
-                                player.inventory.equip(inv_cursor, slot); player._recalc_stats()
-                                log.append(f"Equipped {item.name} [{item.rarity}]")
-                            elif itype == "ring":
-                                if not player.inventory.equipment.get("ring1"):
-                                    player.inventory.equip(inv_cursor, "ring1")
-                                elif not player.inventory.equipment.get("ring2"):
-                                    player.inventory.equip(inv_cursor, "ring2")
-                                else:
-                                    player.inventory.equip(inv_cursor, "ring1")
-                                player._recalc_stats()
-                                log.append(f"Equipped {item.name} [{item.rarity}]")
-                            elif itype == "consumable":
-                                ok, msg = player.inventory.use_item(inv_cursor); log.append(msg)
-                                if item.consumable_effect == "heal": player.heal(item.consumable_value)
-                                elif item.consumable_effect == "mana": player.restore_mp(item.consumable_value)
-                    elif inv_col == 1:
-                        # Unequip
-                        eq_slots = player.inventory.EQUIP_SLOTS
-                        if 0 <= inv_cursor < len(eq_slots):
-                            slot = eq_slots[inv_cursor]
-                            old_item = player.inventory.equipment.get(slot)
-                            if old_item:
-                                player.inventory.equipment[slot] = None
-                                player.inventory.add_item(old_item)
-                                player._recalc_stats()
-                                log.append(f"Unequipped {old_item.name}")
-                    render_inventory(player, inv_cursor, inv_col)
-                if "delete" in keys:
-                    if inv_col == 0 and 0 <= inv_cursor < player.inventory.max_slots:
-                        item = player.inventory.get_item(inv_cursor)
-                        if item:
-                            player.inventory.remove_item(inv_cursor)
-                            log.append(f"Dropped {item.name}")
-                            render_inventory(player, inv_cursor, inv_col)
+                    inspect_mode = False
+                fov.compute(player.x, player.y, 10, gm.tiles)
+                combat.update_popups()
+                render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log,
+                       combat, show_inv, False, game_time, npc_enemies, fx_system, inspect_pos)
+                time.sleep(0.03)
                 continue
 
             # ---- GAMEPLAY MODE ----
@@ -1412,20 +1737,39 @@ def run_game(class_name: str, player_name: str):
                                 combat._add_popup(target.x, target.y, "MISS", "200,200,200")
                                 return
                             target.take_damage(dmg)
+                            if tracker:
+                                try:
+                                    tracker.log_damage(dmg)
+                                except Exception:
+                                    pass
                             color = "255,255,100" if crit else "255,200,200"
                             combat._add_popup(target.x, target.y, f"-{dmg}", color)
                             if not target.alive:
-                                xp = combat.calculate_xp(target)
-                                player.gain_xp(xp)
-                                player.monsters_killed += 1
-                                gold_drop = random.randint(MONSTER_GOLD_MIN, MONSTER_GOLD_MAX_BASE + floor_num * MONSTER_GOLD_FLOOR_MULT)
-                                player.inventory.gold += gold_drop
-                                if isinstance(target, Boss):
+                                if isinstance(target, Boss) and id(target) not in already_rewarded_boss_ids:
+                                    already_rewarded_boss_ids.add(id(target))
                                     boss_killed = True
+                                    xp = combat.calculate_xp(target)
+                                    player.gain_xp(xp)
+                                    player.monsters_killed += 1
+                                    if tracker:
+                                        try:
+                                            tracker.log_kill(target.name)
+                                        except Exception:
+                                            pass
                                     gold_drop = BOSS_GOLD_BASE + floor_num * BOSS_GOLD_FLOOR_MULT
                                     player.inventory.gold += gold_drop
                                     log.append(f"KILLED {target.name}! +{gold_drop}g")
-                                else:
+                                elif not isinstance(target, Boss):
+                                    xp = combat.calculate_xp(target)
+                                    player.gain_xp(xp)
+                                    player.monsters_killed += 1
+                                    if tracker:
+                                        try:
+                                            tracker.log_kill(target.name)
+                                        except Exception:
+                                            pass
+                                    gold_drop = random.randint(MONSTER_GOLD_MIN, MONSTER_GOLD_MAX_BASE + floor_num * MONSTER_GOLD_FLOOR_MULT)
+                                    player.inventory.gold += gold_drop
                                     log.append(f"Killed {target.name}! +{gold_drop}g")
                         combat.add_projectile(
                             player.x, player.y, nearest_enemy.x, nearest_enemy.y,
@@ -1444,14 +1788,23 @@ def run_game(class_name: str, player_name: str):
                         log.append(f"Auto Shot \u2192 {nearest_enemy.name}!")
                     else:
                         atk_bonus = 1.2 if player.class_name == "swordsman" else 1.0
-                        orig_atk = player.atk
                         if atk_bonus > 1.0:
-                            player.atk = int(player.atk * atk_bonus)
-                        result = combat.player_attack_monster(player, nearest_enemy, now)
-                        player.atk = orig_atk
+                            orig_atk = player.atk
+                            try:
+                                player.atk = int(player.atk * atk_bonus)
+                                result = combat.player_attack_monster(player, nearest_enemy, now)
+                            finally:
+                                player.atk = orig_atk
+                        else:
+                            result = combat.player_attack_monster(player, nearest_enemy, now)
                         if result is not None:
                             dmg, crit = result
                             if dmg > 0:
+                                if tracker:
+                                    try:
+                                        tracker.log_damage(dmg)
+                                    except Exception:
+                                        pass
                                 dx_s = nearest_enemy.x - player.x
                                 dy_s = nearest_enemy.y - player.y
                                 steps_s = max(abs(dx_s), abs(dy_s), 1)
@@ -1464,18 +1817,61 @@ def run_game(class_name: str, player_name: str):
                                 combat._add_popup(nearest_enemy.x, nearest_enemy.y - 1, "HIT", "255,200,100")
                                 log.append(f"Hit {nearest_enemy.name} for {dmg}!")
                                 if not nearest_enemy.alive:
-                                    xp = combat.calculate_xp(nearest_enemy)
-                                    player.gain_xp(xp)
-                                    player.monsters_killed += 1
-                                    gold_drop = random.randint(MONSTER_GOLD_MIN, MONSTER_GOLD_MAX_BASE + floor_num * MONSTER_GOLD_FLOOR_MULT)
-                                    player.inventory.gold += gold_drop
-                                    log.append(f"Killed {nearest_enemy.name}! +{gold_drop}g")
+                                    if isinstance(nearest_enemy, Boss) and id(nearest_enemy) not in already_rewarded_boss_ids:
+                                        already_rewarded_boss_ids.add(id(nearest_enemy))
+                                        boss_killed = True
+                                        xp = combat.calculate_xp(nearest_enemy)
+                                        player.gain_xp(xp)
+                                        player.monsters_killed += 1
+                                        if tracker:
+                                            try:
+                                                tracker.log_kill(nearest_enemy.name)
+                                            except Exception:
+                                                pass
+                                        gold_drop = BOSS_GOLD_BASE + floor_num * BOSS_GOLD_FLOOR_MULT
+                                        player.inventory.gold += gold_drop
+                                        log.append(f"KILLED {nearest_enemy.name}! +{gold_drop}g")
+                                    elif not isinstance(nearest_enemy, Boss):
+                                        xp = combat.calculate_xp(nearest_enemy)
+                                        player.gain_xp(xp)
+                                        player.monsters_killed += 1
+                                        if tracker:
+                                            try:
+                                                tracker.log_kill(nearest_enemy.name)
+                                            except Exception:
+                                                pass
+                                        gold_drop = random.randint(MONSTER_GOLD_MIN, MONSTER_GOLD_MAX_BASE + floor_num * MONSTER_GOLD_FLOOR_MULT)
+                                        player.inventory.gold += gold_drop
+                                        log.append(f"Killed {nearest_enemy.name}! +{gold_drop}g")
                             else:
                                 combat._add_popup(nearest_enemy.x, nearest_enemy.y - 1, "MISS", "200,200,200")
                                 log.append(f"Missed {nearest_enemy.name}!")
+                elif _ENV_EFFECTS_AVAILABLE and gm.tile(nx, ny) == TILE_BARREL:
+                    # Barrel: explode on contact
+                    game_state = {
+                        "monsters": monsters, "bosses": bosses, "player": player,
+                        "npc_enemies": npc_enemies, "allies": allies,
+                        "tiles": gm.tiles, "log": log, "combat": combat,
+                    }
+                    try:
+                        explode_barrel(nx, ny, game_state)
+                        if fx_system:
+                            fx_system.spawn_explosion(nx, ny, n=18)
+                            fx_system.add_shake(0.8)
+                    except Exception:
+                        pass
+                    moved = True
                 elif gm.walkable(nx, ny):
                     player.move(dx, dy, now, gm.walls, occupied)
                     moved = True
+                    # Environment tile effects (water slow, etc.)
+                    if _ENV_EFFECTS_AVAILABLE:
+                        try:
+                            tile_msg = apply_tile_effect(player, gm.tile(player.x, player.y), combat)
+                            if tile_msg:
+                                log.append(tile_msg)
+                        except Exception:
+                            pass
                     # Traps activate on step
                     if gm.tile(player.x, player.y) == '^':
                         trap_dmg = random.randint(5 + floor_num * 2, 15 + floor_num * 3)
@@ -1490,6 +1886,7 @@ def run_game(class_name: str, player_name: str):
                 action_cooldown = now + 0.3
                 # Stairs — go to city
                 if gm.tile(player.x, player.y) == STAIRS_DOWN:
+                    distribute_unclaimed_chests()
                     enter_city()
                 # Chest
                 chest = next((c for c in chests if c.x == player.x and c.y == player.y and not c.opened), None)
@@ -1510,11 +1907,24 @@ def run_game(class_name: str, player_name: str):
                         "A fairy grants you a blessing!",
                         "You discover a treasure map!",
                         "A ghost tells you a secret...",
+                        "A wandering smith leaves a random relic behind!",
+                        "A scout marks the safest route ahead!",
                     ]
                     event = random.choice(events)
                     log.append(event)
                     if "healing" in event.lower():
                         player.heal(20)
+                    elif "smith" in event.lower():
+                        relic = generate_random_item(floor_num + 1, player.class_name)
+                        if player.inventory.add_item(relic):
+                            log.append(f"Event loot: {relic.short_text()}")
+                        else:
+                            log.append("The relic is lost: inventory full.")
+                    elif "scout" in event.lower():
+                        for ally in allies:
+                            if getattr(ally, "is_hired", False) and ally.alive:
+                                ally.aggro_range += 2
+                        log.append("Your allies gain +2 awareness for this floor.")
                     gm.tiles[player.y][player.x] = "."
 
             # Skills (Z/X/C/V/B)
@@ -1528,16 +1938,35 @@ def run_game(class_name: str, player_name: str):
                     if skill is None:
                         continue
                     log.append(f"Used {skill.name}!")
+                    if tracker:
+                        try:
+                            tracker.log_skill(skill.name)
+                        except Exception:
+                            pass
 
                     # Self-targeted effects (no enemies needed)
                     if skill.effect in ("heal", "buff", "shield", "evasion"):
-                        combat.player_use_skill(player, skill, [], now)
+                        heal_target = None
+                        if skill.effect == "heal" and player.class_name == "healer":
+                            heal_target = _most_wounded([player] + [a for a in allies if a.alive], player, 6)
+                        heal_before = heal_target.hp if heal_target is not None else None
+                        combat.player_use_skill(player, skill, [], now, gm=gm,
+                                               allies=allies, heal_target=heal_target)
+                        if heal_target is not None and heal_target is not player:
+                            healed_for = max(0, heal_target.hp - heal_before)
+                            if healed_for:
+                                log.append(f"{skill.name} heals {heal_target.name} for {healed_for} HP!")
+                        if skill.id == "sword_3":
+                            combat.add_effect(player, StatusEffect("buff", skill.effect_duration, 30))
+                            combat._add_popup(player.x, player.y - 1, "+30% ATK", "255,200,0")
                         if skill.effect == "evasion":
                             combat.add_effect(player, StatusEffect("evasion", skill.effect_duration, skill.effect_power))
+                            combat.add_effect(player, StatusEffect("haste", skill.effect_duration, 30))
                             combat._add_popup(player.x, player.y - 1, f"EVASION +{skill.effect_power}%", "200,200,255")
-                        if skill.mana_regen > 0:
-                            player.restore_mp(skill.mana_regen)
-                            combat._add_popup(player.x, player.y - 1, f"+{skill.mana_regen} MP", "100,150,255")
+                        if skill.id == "sword_4":
+                            combat.add_effect(player, StatusEffect("haste", skill.effect_duration, 50))
+                            combat.add_effect(player, StatusEffect("def_down", skill.effect_duration, 20))
+                            combat._add_popup(player.x, player.y - 1, "+50% SPD / -20% DEF", "255,160,80")
                     elif skill.effect == "teleport":
                         # Blink: move 5 tiles in last moved direction
                         old_x, old_y = player.x, player.y
@@ -1562,7 +1991,9 @@ def run_game(class_name: str, player_name: str):
                         count = skill.effect_power if skill.effect_power > 0 else 1
                         is_infinite = skill.effect_duration == float('inf') or skill.effect_duration <= 0
                         # Count existing infinite skeletons separately
-                        inf_skeletons = sum(1 for a in allies if a.alive and a.ally_type == "skeleton" and a.is_infinite)
+                        inf_skeletons = sum(1 for a in allies if a.alive and
+                                            getattr(a, "ally_type", "") == "skeleton" and
+                                            getattr(a, "is_infinite", False))
                         MAX_INF = 3
                         for _ in range(count):
                             if is_infinite and inf_skeletons >= MAX_INF:
@@ -1683,19 +2114,44 @@ def run_game(class_name: str, player_name: str):
                             atk = player.atk
                             if combat.has_effect(player, "buff"):
                                 atk = int(atk * (1 + combat.get_effect_power(player, "buff") / 100.0))
+                            skill_stat_bonus = 0
+                            if skill.scale_stat:
+                                coef = skill.scale_coef if skill.scale_coef > 0 else 0.3
+                                stat_value = getattr(player, skill.scale_stat + "_stat", getattr(player, skill.scale_stat, 0))
+                                skill_stat_bonus = int(stat_value * coef)
 
                             def _mk_on_hit(sk, player_ref, atk_val, occ):
                                 def _on_hit(target, hx, hy):
+                                    if sk.id == "rogue_1" and target.alive:
+                                        # Move to the tile behind the target before striking.
+                                        bx = target.x + (target.x - player_ref.x)
+                                        by = target.y + (target.y - player_ref.y)
+                                        if abs(target.x - player_ref.x) >= abs(target.y - player_ref.y):
+                                            bx = target.x + (1 if player_ref.x < target.x else -1)
+                                            by = target.y
+                                        else:
+                                            bx = target.x
+                                            by = target.y + (1 if player_ref.y < target.y else -1)
+                                        if 0 <= bx < gm.w and 0 <= by < gm.h and gm.walkable(bx, by) and (bx, by) not in gm.walls:
+                                            player_ref.x, player_ref.y = bx, by
                                     t_def = target.defense if hasattr(target, 'defense') else 0
                                     if combat.has_effect(target, "slow"):
                                         t_def = max(0, t_def - 2)
                                     target_dodge = getattr(target, 'dodge', 0.05)
                                     skill_miss = max(0.02, 0.10 - player_ref.level * 0.008)
-                                    dmg, crit = combat._calc_damage(atk_val + sk.damage, t_def, player_ref.crit_chance, skill_miss)
+                                    crit_chance = player_ref.crit_chance
+                                    if sk.effect == "crit_boost":
+                                        crit_chance += sk.effect_power / 100.0
+                                    dmg, crit = combat._calc_damage(atk_val + sk.damage + skill_stat_bonus, t_def, crit_chance, skill_miss)
                                     if dmg == 0:
                                         combat._add_popup(target.x, target.y, "MISS", "200,200,200")
                                         return
                                     target.take_damage(dmg)
+                                    if tracker:
+                                        try:
+                                            tracker.log_damage(dmg)
+                                        except Exception:
+                                            pass
                                     color = "255,255,100" if crit else "255,150,150"
                                     combat._add_popup(target.x, target.y, f"-{dmg}", color)
 
@@ -1720,32 +2176,62 @@ def run_game(class_name: str, player_name: str):
                                                 target.x = nx_k
                                                 target.y = ny_k
                                             combat._add_popup(target.x, target.y - 1, "KNOCK", "200,200,255")
-                                        elif sk.effect == "lifesteal":
-                                            heal = int(dmg * sk.effect_power / 100.0)
-                                            player_ref.heal(heal)
-                                            combat._add_popup(player_ref.x, player_ref.y, f"+{heal}", "0,255,100")
+                                    if sk.id == "sword_2" and target.alive:
+                                        combat.add_effect(target, StatusEffect("weaken", 3.0, 20))
+                                        combat._add_popup(target.x, target.y - 1, "WEAKEN", "255,180,120")
+                                    if sk.id == "sword_2" and target.alive:
+                                        dx_b = target.x - player_ref.x
+                                        dy_b = target.y - player_ref.y
+                                        step_b = max(1, abs(dx_b) + abs(dy_b))
+                                        nx_b = target.x + (dx_b // step_b) * 2
+                                        ny_b = target.y + (dy_b // step_b) * 2
+                                        if 0 <= nx_b < gm.w and 0 <= ny_b < gm.h and (nx_b, ny_b) not in gm.walls:
+                                            target.x, target.y = nx_b, ny_b
+                                            combat._add_popup(target.x, target.y, "KNOCK", "200,200,255")
+                                    if sk.effect == "lifesteal" and dmg > 0:
+                                        heal = int(dmg * sk.effect_power / 100.0)
+                                        before_hp = player_ref.hp
+                                        player_ref.heal(heal)
+                                        actual_heal = player_ref.hp - before_hp
+                                        combat._add_popup(player_ref.x, player_ref.y, f"+{actual_heal}", "0,255,100")
 
                                     if not target.alive:
-                                        if isinstance(target, Monster):
+                                        if isinstance(target, Boss) and id(target) not in already_rewarded_boss_ids:
+                                            already_rewarded_boss_ids.add(id(target))
                                             xp = combat.calculate_xp(target)
                                             player_ref.gain_xp(xp)
                                             player_ref.monsters_killed += 1
-                                            gold_drop = random.randint(MONSTER_GOLD_MIN, MONSTER_GOLD_MAX_BASE + floor_num * MONSTER_GOLD_FLOOR_MULT)
-                                            player_ref.inventory.gold += gold_drop
-                                            log.append(f"Killed {target.name} with {sk.name}! +{gold_drop}g")
-                                        elif isinstance(target, Boss):
-                                            xp = combat.calculate_xp(target)
-                                            player_ref.gain_xp(xp)
-                                            player_ref.monsters_killed += 1
+                                            if tracker:
+                                                try:
+                                                    tracker.log_kill(target.name)
+                                                except Exception:
+                                                    pass
                                             gold_drop = BOSS_GOLD_BASE + floor_num * BOSS_GOLD_FLOOR_MULT
                                             player_ref.inventory.gold += gold_drop
                                             boss_killed = True
                                             log.append(f"KILLED {target.name} with {sk.name}! +{gold_drop}g")
+                                        elif isinstance(target, Monster):
+                                            xp = combat.calculate_xp(target)
+                                            player_ref.gain_xp(xp)
+                                            player_ref.monsters_killed += 1
+                                            if tracker:
+                                                try:
+                                                    tracker.log_kill(target.name)
+                                                except Exception:
+                                                    pass
+                                            gold_drop = random.randint(MONSTER_GOLD_MIN, MONSTER_GOLD_MAX_BASE + floor_num * MONSTER_GOLD_FLOOR_MULT)
+                                            player_ref.inventory.gold += gold_drop
+                                            log.append(f"Killed {target.name} with {sk.name}! +{gold_drop}g")
                                         elif hasattr(target, 'class_name'):
                                             # NPCEnemy
                                             xp = target.xp_value if hasattr(target, 'xp_value') else 15
                                             player_ref.gain_xp(xp)
                                             player_ref.monsters_killed += 1
+                                            if tracker:
+                                                try:
+                                                    tracker.log_kill(target.name)
+                                                except Exception:
+                                                    pass
                                             gold_drop = random.randint(8, 20 + floor_num * 3)
                                             player_ref.inventory.gold += gold_drop
                                             log.append(f"Killed {target.name} with {sk.name}! +{gold_drop}g")
@@ -1927,7 +2413,7 @@ def run_game(class_name: str, player_name: str):
             combat.process_effects(player, now)
 
             # Update projectiles
-            combat.update_projectiles(monsters, bosses, player, log, dt, now, npc_enemies)
+            combat.update_projectiles(monsters, bosses, player, log, dt, now, npc_enemies, allies)
 
             # Monster AI
             occupied = {(player.x, player.y)}
@@ -1944,13 +2430,38 @@ def run_game(class_name: str, player_name: str):
                 if a.alive:
                     occupied.add((a.x, a.y))
 
+            # Hired party members use role-based tactics and pathfinding.
+            hired_allies = [a for a in allies if getattr(a, "is_hired", False) and a.alive]
+            summons = [a for a in allies if not getattr(a, "is_hired", False) and a.alive]
+            for ally in hired_allies:
+                npc_ally_decide_and_act(ally, player, hired_allies, summons,
+                                        monsters, bosses, npc_enemies, gm,
+                                        occupied, combat, log, now)
+
+            # A companion standing next to an unopened chest can claim it.
+            # Loot goes into the ally's personal progression bag.
+            if not any(e.alive for e in monsters + bosses + npc_enemies):
+                for ally in hired_allies:
+                    chest = next((c for c in chests if not c.opened and
+                                  abs(c.x - ally.x) + abs(c.y - ally.y) <= 1), None)
+                    if chest is None:
+                        continue
+                    chest.open()
+                    for item in chest.items:
+                        if ally.receive_loot(item):
+                            log.append(f"{ally.name} loots {item.name}.")
+                        elif player.inventory.add_item(item):
+                            log.append(f"{ally.name} passes {item.name} to you.")
+                    player.inventory.gold += chest.gold
+                    log.append(f"{ally.name} opened a chest (+{chest.gold}g).")
+
             for m in monsters:
                 if not m.alive:
                     continue
                 # Find closest target (player or NPC enemy)
                 closest_target = None
                 closest_dist = 999
-                for t in [player] + [ne for ne in npc_enemies if ne.alive]:
+                for t in [player] + [a for a in allies if a.alive] + [ne for ne in npc_enemies if ne.alive]:
                     d = abs(m.x - t.x) + abs(m.y - t.y)
                     if d < closest_dist:
                         closest_dist = d
@@ -1958,6 +2469,28 @@ def run_game(class_name: str, player_name: str):
                 
                 if closest_target and m.can_see_player(closest_target.x, closest_target.y):
                     dist_p = abs(m.x - closest_target.x) + abs(m.y - closest_target.y)
+                    # Cowards and skirmishers disengage when wounded, creating space
+                    # instead of blindly walking into the player's weapon.
+                    if getattr(m, "flee_hp", 0.0) and m.hp / max(1, m.max_hp) <= m.flee_hp and dist_p <= 4:
+                        if not combat.is_stunned(m):
+                            old_pos = (m.x, m.y)
+                            path = flee_path((m.x, m.y), (closest_target.x, closest_target.y), gm.walls, occupied, 2)
+                            if path:
+                                m.x, m.y = path[0]
+                                m.last_move = now
+                                occupied.discard(old_pos)
+                                occupied.add((m.x, m.y))
+                                continue
+                    # Pack hunters become more dangerous when they surround a target.
+                    # The bonus is recalculated every turn and never permanently mutates atk.
+                    pack_bonus = 0
+                    if getattr(m, "behavior", "") == "pack":
+                        pack_bonus = min(8, sum(1 for other in monsters
+                                               if other is not m and other.alive and
+                                               other.monster_type == m.monster_type and
+                                               abs(other.x - closest_target.x) + abs(other.y - closest_target.y) <= 2) * 2)
+                    original_atk = m.atk
+                    m.atk += pack_bonus
                     # Ranged monster AI
                     if hasattr(m, 'ranged') and m.ranged and dist_p > 1:
                         if dist_p <= m.attack_range:
@@ -1965,13 +2498,23 @@ def run_game(class_name: str, player_name: str):
                         else:
                             if not combat.is_stunned(m):
                                 old_pos = (m.x, m.y)
+                                spd_mult = combat.get_speed_mult(m)
                                 old_spd = m.speed
-                                m.speed *= combat.get_speed_mult(m)
-                                result = m.move_towards(closest_target.x, closest_target.y, now, gm.walls, occupied)
-                                m.speed = old_spd
+                                try:
+                                    m.speed *= spd_mult
+                                    result = m.move_towards(closest_target.x, closest_target.y, now, gm.walls, occupied)
+                                finally:
+                                    m.speed = old_spd
                                 if result:
                                     occupied.discard(old_pos)
                                     occupied.add(result)
+                                    # Check trap for ranged monster
+                                    if _ENV_EFFECTS_AVAILABLE and gm.tile(m.x, m.y) == '^':
+                                        try:
+                                            check_trap_at_tile(m, '^', m.x, m.y, gm.tiles, floor_num)
+                                            log.append(f"{m.name} hit a trap!")
+                                        except Exception:
+                                            pass
                     else:
                         # Melee monster AI
                         if dist_p <= 1:
@@ -1979,14 +2522,26 @@ def run_game(class_name: str, player_name: str):
                                 result = combat.monster_attack_player(m, player, now)
                                 if result and result[0] > 0:
                                     dmg, crit = result
+                                    if tracker:
+                                        try:
+                                            tracker.damage_taken += dmg
+                                        except Exception:
+                                            pass
                                     log.append(f"{m.name} hits you for {dmg}!")
                                     if not player.alive:
                                         break
                                 elif result and result[0] == 0:
                                     log.append(f"{m.name} missed you!")
+                            elif closest_target in allies:
+                                result = combat.monster_attack_ally(m, closest_target, now)
+                                if result and result[0] > 0:
+                                    log.append(f"{m.name} hits {closest_target.name} for {result[0]}!")
+                                if result and not closest_target.alive:
+                                    log.append(f"{m.name} killed {closest_target.name}!")
                             else:
                                 # Attack NPC enemy
                                 if (now - m.last_attack) < m.attack_delay:
+                                    m.atk = original_atk
                                     continue
                                 m.last_attack = now
                                 t_def = closest_target.defense if hasattr(closest_target, 'defense') else 0
@@ -1999,13 +2554,24 @@ def run_game(class_name: str, player_name: str):
                         else:
                             if not combat.is_stunned(m):
                                 old_pos = (m.x, m.y)
+                                spd_mult = combat.get_speed_mult(m)
                                 old_spd = m.speed
-                                m.speed *= combat.get_speed_mult(m)
-                                result = m.move_towards(closest_target.x, closest_target.y, now, gm.walls, occupied)
-                                m.speed = old_spd
+                                try:
+                                    m.speed *= spd_mult
+                                    result = m.move_towards(closest_target.x, closest_target.y, now, gm.walls, occupied)
+                                finally:
+                                    m.speed = old_spd
                                 if result:
                                     occupied.discard(old_pos)
                                     occupied.add(result)
+                                    # Check trap for melee monster
+                                    if _ENV_EFFECTS_AVAILABLE and gm.tile(m.x, m.y) == '^':
+                                        try:
+                                            check_trap_at_tile(m, '^', m.x, m.y, gm.tiles, floor_num)
+                                            log.append(f"{m.name} hit a trap!")
+                                        except Exception:
+                                            pass
+                    m.atk = original_atk
                 else:
                     if not combat.is_stunned(m):
                         old_pos = (m.x, m.y)
@@ -2013,12 +2579,21 @@ def run_game(class_name: str, player_name: str):
                         if result:
                             occupied.discard(old_pos)
                             occupied.add(result)
+                            # Check trap for wandering monster
+                            if _ENV_EFFECTS_AVAILABLE and gm.tile(m.x, m.y) == '^':
+                                try:
+                                    check_trap_at_tile(m, '^', m.x, m.y, gm.tiles, floor_num)
+                                    log.append(f"{m.name} hit a trap!")
+                                except Exception:
+                                    pass
 
             for b in bosses:
                 if not b.alive:
                     # Check if boss was just killed (by projectile/player attack earlier)
-                    if not boss_killed:
+                    if not boss_killed and id(b) not in already_rewarded_boss_ids:
+                        already_rewarded_boss_ids.add(id(b))
                         boss_killed = True
+                        bosses_killed_count += 1
                         xp = combat.calculate_xp(b)
                         player.gain_xp(xp)
                         player.monsters_killed += 1
@@ -2026,24 +2601,45 @@ def run_game(class_name: str, player_name: str):
                         player.inventory.gold += gold_drop
                         log.append(f"KILLED {b.name}! +{xp} XP, +{gold_drop}g!")
                     continue
-                if b.can_see_player(player.x, player.y):
-                    dist_p = abs(b.x - player.x) + abs(b.y - player.y)
+                # The player has absolute aggro priority. A boss only chooses
+                # an ally when the player is outside its aggro range.
+                boss_target = player if b.can_see_player(player.x, player.y) else None
+                if boss_target is None:
+                    boss_target = min(
+                        (a for a in allies if a.alive and b.can_see_player(a.x, a.y)),
+                        key=lambda a: abs(b.x - a.x) + abs(b.y - a.y),
+                        default=None,
+                    )
+                if boss_target is not None:
+                    dist_p = abs(b.x - boss_target.x) + abs(b.y - boss_target.y)
                     if dist_p <= 1:
-                        result = combat.boss_attack_player(b, player, now)
+                        result = (combat.boss_attack_player(b, player, now)
+                                  if boss_target is player else
+                                  combat.boss_attack_ally(b, boss_target, now))
                         if result and result[0] > 0:
                             dmg, crit = result
-                            log.append(f"{b.name} hits you for {dmg}!")
-                            if not player.alive:
+                            if boss_target is player and tracker:
+                                try:
+                                    tracker.damage_taken += dmg
+                                except Exception:
+                                    pass
+                            victim_name = "you" if boss_target is player else boss_target.name
+                            log.append(f"{b.name} hits {victim_name} for {dmg}!")
+                            if boss_target is player and not player.alive:
                                 break
                         elif result and result[0] == 0:
-                            log.append(f"{b.name} missed you!")
+                            victim_name = "you" if boss_target is player else boss_target.name
+                            log.append(f"{b.name} missed {victim_name}!")
                     else:
                         if not combat.is_stunned(b):
                             old_pos = (b.x, b.y)
+                            spd_mult = combat.get_speed_mult(b)
                             old_spd = b.speed
-                            b.speed *= combat.get_speed_mult(b)
-                            result = b.move_towards(player.x, player.y, now, gm.walls, occupied)
-                            b.speed = old_spd
+                            try:
+                                b.speed *= spd_mult
+                                result = b.move_towards(boss_target.x, boss_target.y, now, gm.walls, occupied)
+                            finally:
+                                b.speed = old_spd
                             if result:
                                 occupied.discard(old_pos)
                                 occupied.add(result)
@@ -2057,6 +2653,22 @@ def run_game(class_name: str, player_name: str):
                     gm.walls, occupied, now, combat, log
                 )
 
+            # Random monster loot: every enemy has a small, floor-scaled chance
+            # to drop a fully randomized item, not only chests.
+            for defeated in monsters + bosses + npc_enemies:
+                if defeated.alive or id(defeated) in loot_awarded_ids:
+                    continue
+                loot_awarded_ids.add(id(defeated))
+                if random.random() < min(0.28, 0.08 + floor_num * 0.012):
+                    dropped = generate_random_item(floor_num, player.class_name)
+                    if player.inventory.add_item(dropped):
+                        log.append(f"Loot drop: {dropped.short_text()}")
+                        if tracker:
+                            try:
+                                tracker.log_loot(dropped.name)
+                            except Exception:
+                                pass
+
             # Regenerate MP and HP slowly
             mp_regen_acc += player.mp_regen * dt
             if mp_regen_acc >= 1.0:
@@ -2067,6 +2679,11 @@ def run_game(class_name: str, player_name: str):
             if hp_regen_acc >= 1.0:
                 amt = int(hp_regen_acc)
                 player.heal(amt)
+                if tracker:
+                    try:
+                        tracker.log_heal(amt)
+                    except Exception:
+                        pass
                 hp_regen_acc -= amt
 
             # Ally AI — focus on player's nearby enemy, else roam free
@@ -2104,8 +2721,11 @@ def run_game(class_name: str, player_name: str):
                         focus_target = ne
 
             for ally in allies[:]:
-                if not ally.alive or (not ally.is_infinite and ally.expired()):
+                if not ally.alive or (not getattr(ally, "is_hired", False) and
+                                       not getattr(ally, "is_infinite", False) and ally.expired()):
                     allies.remove(ally)
+                    continue
+                if getattr(ally, "is_hired", False):
                     continue
 
                 ally_dist = abs(ally.x - player.x) + abs(ally.y - player.y)
@@ -2122,16 +2742,30 @@ def run_game(class_name: str, player_name: str):
                     if d <= 1:
                         result = combat.ally_attack(ally, focus_target, now)
                         if result and not focus_target.alive:
-                            xp = combat.calculate_xp(focus_target)
-                            player.gain_xp(xp)
-                            leveled = ally.gain_xp(xp)
-                            player.monsters_killed += 1
-                            gold_drop = random.randint(3, 10 + floor_num * 2)
-                            player.inventory.gold += gold_drop
-                            log.append(f"{ally.name} killed {focus_target.name}! +{xp} XP +{gold_drop}g")
-                            if leveled:
-                                combat._add_popup(ally.x, ally.y - 1, f"LVL {ally.level}", "100,255,200")
-                                log.append(f"{ally.name} leveled up to {ally.level}!")
+                            if isinstance(focus_target, Boss) and id(focus_target) not in already_rewarded_boss_ids:
+                                already_rewarded_boss_ids.add(id(focus_target))
+                                boss_killed = True
+                                xp = combat.calculate_xp(focus_target)
+                                player.gain_xp(xp)
+                                leveled = ally.gain_xp(xp)
+                                player.monsters_killed += 1
+                                gold_drop = BOSS_GOLD_BASE + floor_num * BOSS_GOLD_FLOOR_MULT
+                                player.inventory.gold += gold_drop
+                                log.append(f"{ally.name} killed {focus_target.name}! +{xp} XP +{gold_drop}g")
+                                if leveled:
+                                    combat._add_popup(ally.x, ally.y - 1, f"LVL {ally.level}", "100,255,200")
+                                    log.append(f"{ally.name} leveled up to {ally.level}!")
+                            elif not isinstance(focus_target, Boss):
+                                xp = combat.calculate_xp(focus_target)
+                                player.gain_xp(xp)
+                                leveled = ally.gain_xp(xp)
+                                player.monsters_killed += 1
+                                gold_drop = random.randint(3, 10 + floor_num * 2)
+                                player.inventory.gold += gold_drop
+                                log.append(f"{ally.name} killed {focus_target.name}! +{xp} XP +{gold_drop}g")
+                                if leveled:
+                                    combat._add_popup(ally.x, ally.y - 1, f"LVL {ally.level}", "100,255,200")
+                                    log.append(f"{ally.name} leveled up to {ally.level}!")
                     else:
                         old_pos = (ally.x, ally.y)
                         result = ally.move_towards(focus_target.x, focus_target.y, now, gm.walls, occupied)
@@ -2164,16 +2798,30 @@ def run_game(class_name: str, player_name: str):
                         if roam_dist <= 1:
                             result = combat.ally_attack(ally, roam_target, now)
                             if result and not roam_target.alive:
-                                xp = combat.calculate_xp(roam_target)
-                                player.gain_xp(xp)
-                                leveled = ally.gain_xp(xp)
-                                player.monsters_killed += 1
-                                gold_drop = random.randint(3, 10 + floor_num * 2)
-                                player.inventory.gold += gold_drop
-                                log.append(f"{ally.name} killed {roam_target.name}! +{xp} XP +{gold_drop}g")
-                                if leveled:
-                                    combat._add_popup(ally.x, ally.y - 1, f"LVL {ally.level}", "100,255,200")
-                                    log.append(f"{ally.name} leveled up to {ally.level}!")
+                                if isinstance(roam_target, Boss) and id(roam_target) not in already_rewarded_boss_ids:
+                                    already_rewarded_boss_ids.add(id(roam_target))
+                                    boss_killed = True
+                                    xp = combat.calculate_xp(roam_target)
+                                    player.gain_xp(xp)
+                                    leveled = ally.gain_xp(xp)
+                                    player.monsters_killed += 1
+                                    gold_drop = BOSS_GOLD_BASE + floor_num * BOSS_GOLD_FLOOR_MULT
+                                    player.inventory.gold += gold_drop
+                                    log.append(f"{ally.name} killed {roam_target.name}! +{xp} XP +{gold_drop}g")
+                                    if leveled:
+                                        combat._add_popup(ally.x, ally.y - 1, f"LVL {ally.level}", "100,255,200")
+                                        log.append(f"{ally.name} leveled up to {ally.level}!")
+                                elif not isinstance(roam_target, Boss):
+                                    xp = combat.calculate_xp(roam_target)
+                                    player.gain_xp(xp)
+                                    leveled = ally.gain_xp(xp)
+                                    player.monsters_killed += 1
+                                    gold_drop = random.randint(3, 10 + floor_num * 2)
+                                    player.inventory.gold += gold_drop
+                                    log.append(f"{ally.name} killed {roam_target.name}! +{xp} XP +{gold_drop}g")
+                                    if leveled:
+                                        combat._add_popup(ally.x, ally.y - 1, f"LVL {ally.level}", "100,255,200")
+                                        log.append(f"{ally.name} leveled up to {ally.level}!")
                         else:
                             old_pos = (ally.x, ally.y)
                             result = ally.move_towards(roam_target.x, roam_target.y, now, gm.walls, occupied)
@@ -2199,7 +2847,9 @@ def run_game(class_name: str, player_name: str):
             combat.update_popups()
 
             # Render
-            render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, combat, show_inv, False, game_time, npc_enemies)
+            render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log,
+                   combat, show_inv, False, game_time, npc_enemies, fx_system,
+                   inspect_pos if inspect_mode else None)
 
             time.sleep(0.03)
 
@@ -2209,4 +2859,19 @@ def run_game(class_name: str, player_name: str):
         show_cursor()
 
     if not player.alive:
-        show_death(floor_num, player.turns, player.monsters_killed, player_name, class_name)
+        # Run stats — finish and save
+        if tracker:
+            try:
+                tracker.finish(floor_num, "victory!" if victory_flag else "killed in combat")
+                tracker.save_to_history()
+            except Exception:
+                pass
+        # Meta-progression: award points on death
+        if meta is not None:
+            try:
+                earned = meta.add_points(floor_num, player.monsters_killed, bosses_killed_count)
+                meta.save()
+            except Exception:
+                pass
+        show_death(floor_num, player.turns, player.monsters_killed, player_name, class_name,
+                   stats=tracker.to_dict() if tracker else None)

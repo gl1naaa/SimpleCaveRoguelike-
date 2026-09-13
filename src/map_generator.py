@@ -7,6 +7,11 @@ from config import (
     ROOM_WEIGHTS, ALTAR,
 )
 
+# Module-level seed set by main.py before run_game(); generate_dungeon() uses it
+# as fallback when no explicit seed_base argument is passed.
+SEED_BASE = None
+from env_effects import TILE_WATER, TILE_BARREL, TILE_RUBBLE
+
 
 @dataclass
 class Room:
@@ -44,7 +49,8 @@ class Node:
         return self.left is None and self.right is None
 
 
-def _pick_room_type(floor: int, is_first: bool, is_last: bool) -> str:
+def _pick_room_type(floor: int, is_first: bool, is_last: bool, rng=None) -> str:
+    _rng = rng if rng is not None else random
     if is_first:
         return ROOM_NORMAL
     if is_last:
@@ -59,16 +65,18 @@ def _pick_room_type(floor: int, is_first: bool, is_last: bool) -> str:
             weights[i] += floor
         elif t == ROOM_TREASURE:
             weights[i] += floor * 0.5
-    return random.choices(types, weights=weights, k=1)[0]
+    return _rng.choices(types, weights=weights, k=1)[0]
 
 
 class Dungeon:
-    def __init__(self, w=MAP_WIDTH, h=MAP_HEIGHT, floor: int = 1):
+    def __init__(self, w=MAP_WIDTH, h=MAP_HEIGHT, floor: int = 1, seed_base=None):
         self.w, self.h = w, h
         self.floor = floor
         self.rooms: List[Room] = []
         self.corridors: List[Tuple[int, int]] = []
         self.walls: set = set()
+        # Per-floor seeded RNG; falls back to global random when seed_base is None
+        self.rng = random.Random(f"{seed_base}_{floor}") if seed_base is not None else random
 
     def generate(self):
         root = Node(0, 0, self.w, self.h)
@@ -78,6 +86,7 @@ class Dungeon:
         self._connect()
         tiles = self._build()
         self._compute_walls(tiles)
+        self._place_env_tiles(tiles)
         first = self.rooms[0]
         last = self.rooms[-1]
         tiles[last.center[1]][last.center[0]] = ">"
@@ -93,7 +102,7 @@ class Dungeon:
             lo, hi = ROOM_MIN, node.h - ROOM_MIN
         if hi <= lo:
             return
-        sp = random.randint(lo, hi)
+        sp = self.rng.randint(lo, hi)
         if horiz:
             node.left = Node(node.x, node.y, sp, node.h)
             node.right = Node(node.x + sp, node.y, node.w - sp, node.h)
@@ -105,11 +114,11 @@ class Dungeon:
 
     def _create_rooms(self, node):
         if node.is_leaf():
-            if node.w >= ROOM_MIN + 2 and node.h >= ROOM_MIN + 2 and random.random() < 0.8:
-                rw = random.randint(ROOM_MIN, min(ROOM_MAX, node.w - 2))
-                rh = random.randint(ROOM_MIN, min(ROOM_MAX, node.h - 2))
-                rx = random.randint(node.x + 1, node.x + node.w - rw - 1)
-                ry = random.randint(node.y + 1, node.y + node.h - rh - 1)
+            if node.w >= ROOM_MIN + 2 and node.h >= ROOM_MIN + 2 and self.rng.random() < 0.8:
+                rw = self.rng.randint(ROOM_MIN, min(ROOM_MAX, node.w - 2))
+                rh = self.rng.randint(ROOM_MIN, min(ROOM_MAX, node.h - 2))
+                rx = self.rng.randint(node.x + 1, node.x + node.w - rw - 1)
+                ry = self.rng.randint(node.y + 1, node.y + node.h - rh - 1)
                 r = Room(rx, ry, rw, rh)
                 node.room = r
                 self.rooms.append(r)
@@ -127,7 +136,7 @@ class Dungeon:
         for i, room in enumerate(self.rooms):
             is_first = (i == 0)
             is_last = (i == len(self.rooms) - 1)
-            room.room_type = _pick_room_type(self.floor, is_first, is_last)
+            room.room_type = _pick_room_type(self.floor, is_first, is_last, rng=self.rng)
 
     def _connect(self):
         if len(self.rooms) < 2:
@@ -135,15 +144,15 @@ class Dungeon:
         for i in range(len(self.rooms) - 1):
             self._corridor(self.rooms[i].center, self.rooms[i + 1].center)
         for _ in range(max(1, len(self.rooms) // 3)):
-            if random.random() < CONNECT_CHANCE and len(self.rooms) >= 2:
-                a, b = random.sample(self.rooms, 2)
+            if self.rng.random() < CONNECT_CHANCE and len(self.rooms) >= 2:
+                a, b = self.rng.sample(self.rooms, 2)
                 self._corridor(a.center, b.center)
 
     def _corridor(self, a, b):
         x1, y1 = a
         x2, y2 = b
         w = 3  # corridor width
-        if random.random() < 0.5:
+        if self.rng.random() < 0.5:
             for x in range(min(x1, x2), max(x1, x2) + 1):
                 for dy in range(-(w // 2), (w // 2) + 1):
                     self.corridors.append((x, y1 + dy))
@@ -184,11 +193,84 @@ class Dungeon:
                 if tiles[y][x] == "#":
                     self.walls.add((x, y))
 
+    def _place_env_tiles(self, tiles):
+        """Place water puddles, explosive barrels, and rubble after rooms are built."""
+        if len(self.rooms) < 2:
+            return
+
+        # --- Water puddles (3-5 puddles, each 2-4 tiles) ---
+        num_puddles = random.randint(3, 5)
+        for _ in range(num_puddles):
+            room = random.choice(self.rooms)
+            inner = room.inner
+            if len(inner) < 2:
+                continue
+            # Pick a random start tile inside the room
+            sx, sy = random.choice(inner)
+            size = random.randint(2, 4)
+            placed = 0
+            # BFS-like cluster: expand from start in random directions
+            candidates = [(sx, sy)]
+            random.shuffle(candidates)
+            visited = set()
+            while candidates and placed < size:
+                cx, cy = candidates.pop(0)
+                if (cx, cy) in visited:
+                    continue
+                if 0 <= cx < self.w and 0 <= cy < self.h and tiles[cy][cx] == ".":
+                    tiles[cy][cx] = TILE_WATER
+                    placed += 1
+                    visited.add((cx, cy))
+                    # Add neighbors for cluster growth
+                    for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                        nx, ny = cx + dx, cy + dy
+                        if (nx, ny) not in visited and 0 <= nx < self.w and 0 <= ny < self.h:
+                            candidates.append((nx, ny))
+                    random.shuffle(candidates)
+
+        # --- Barrels (2-3 per floor, inside rooms) ---
+        num_barrels = random.randint(2, 3)
+        for _ in range(num_barrels):
+            room = random.choice(self.rooms)
+            inner = room.inner
+            if not inner:
+                continue
+            # Try several times to find a valid spot
+            for _attempt in range(20):
+                bx, by = random.choice(inner)
+                if tiles[by][bx] == ".":
+                    tiles[by][bx] = TILE_BARREL
+                    break
+
+        # --- Rubble (2-4 tiles on room edges) ---
+        num_rubble = random.randint(2, 4)
+        placed_rubble = 0
+        for _attempt in range(num_rubble * 10):
+            if placed_rubble >= num_rubble:
+                break
+            room = random.choice(self.rooms)
+            inner = room.inner
+            if not inner:
+                continue
+            rx, ry = random.choice(inner)
+            # Only place on floor tiles that are adjacent to a wall (room edge)
+            if tiles[ry][rx] != ".":
+                continue
+            has_wall_neighbor = False
+            for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                nx, ny = rx + dx, ry + dy
+                if 0 <= nx < self.w and 0 <= ny < self.h and tiles[ny][nx] == "#":
+                    has_wall_neighbor = True
+                    break
+            if has_wall_neighbor:
+                tiles[ry][rx] = TILE_RUBBLE
+                placed_rubble += 1
+
     def get_floor_tiles(self, tiles) -> List[Tuple[int, int]]:
         floors = []
         for y in range(self.h):
             for x in range(self.w):
-                if tiles[y][x] == ".":
+                if tiles[y][x] in (".", TILE_WATER, TILE_RUBBLE):
                     floors.append((x, y))
         return floors
 
@@ -196,8 +278,10 @@ class Dungeon:
         return room.center
 
 
-def generate_dungeon(floor: int = 1):
-    return Dungeon(floor=floor).generate()
+def generate_dungeon(floor: int = 1, seed_base=None):
+    # Fall back to the module-level SEED_BASE if no explicit seed passed
+    sb = seed_base if seed_base is not None else SEED_BASE
+    return Dungeon(floor=floor, seed_base=sb).generate()
 
 
 # ============================================================

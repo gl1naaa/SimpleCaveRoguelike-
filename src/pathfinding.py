@@ -1,33 +1,45 @@
 from collections import deque
-from typing import Set, Tuple, List, Optional
+from typing import Dict, Set, Tuple, List, Optional
 
 
 def bfs_path(start: Tuple[int, int], goal: Tuple[int, int],
              walls: Set[Tuple[int, int]], occupied: Set[Tuple[int, int]],
              max_depth: int = 15) -> List[Tuple[int, int]]:
+    """BFS path from *start* to *goal*.
+
+    Uses a parent-dict for O(n) memory instead of storing the full path at
+    every queue node.  The public API is unchanged.
+    """
     if start == goal:
         return []
-    sx, sy = start
     gx, gy = goal
     if (gx, gy) in walls:
         return []
-    visited = {start}
-    queue = deque([(sx, sy, [])])
+
+    parent: Dict[Tuple[int, int], Optional[Tuple[int, int]]] = {start: None}
+    queue = deque([(start[0], start[1], 0)])  # (x, y, depth)
+
     while queue:
-        x, y, path = queue.popleft()
-        if len(path) >= max_depth:
+        x, y, depth = queue.popleft()
+        if depth >= max_depth:
             continue
         for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
             nx, ny = x + dx, y + dy
-            if (nx, ny) in visited or (nx, ny) in walls:
+            if (nx, ny) in parent or (nx, ny) in walls:
                 continue
             if (nx, ny) != goal and (nx, ny) in occupied:
                 continue
-            new_path = path + [(nx, ny)]
+            parent[(nx, ny)] = (x, y)
             if (nx, ny) == goal:
-                return new_path
-            visited.add((nx, ny))
-            queue.append((nx, ny, new_path))
+                # Reconstruct path by walking parent pointers
+                path: List[Tuple[int, int]] = []
+                cur: Optional[Tuple[int, int]] = (nx, ny)
+                while cur != start:
+                    path.append(cur)
+                    cur = parent[cur]
+                path.reverse()
+                return path
+            queue.append((nx, ny, depth + 1))
     return []
 
 

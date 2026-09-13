@@ -8,6 +8,28 @@ def rst():       return f"{ESC}[0m"
 def bold():      return f"{ESC}[1m"
 def dim():       return f"{ESC}[2m"
 
+def vis_len(s):
+    """Visible length of string excluding ANSI escape codes."""
+    i, length = 0, 0
+    while i < len(s):
+        if s[i] == '\x1b':
+            while i < len(s) and s[i] != 'm':
+                i += 1
+        else:
+            length += 1
+        i += 1
+    return length
+
+def pad_line(line, width=0):
+    """Pad line with spaces to fill width. Auto-detects terminal width if 0."""
+    if width <= 0:
+        try:
+            import shutil
+            width = shutil.get_terminal_size().columns
+        except Exception:
+            width = 120
+    return line + ' ' * max(0, width - vis_len(line))
+
 # Unicode
 BLK   = "\u2588"
 SH1   = "\u2591"
@@ -96,6 +118,10 @@ def hide_cursor():
 
 def show_cursor():
     sys.stdout.write(f"{ESC}[?25h")
+
+def combo_popup_text(text, r=255, g=255, b=100):
+    """Create bright styled text for combo popups."""
+    return f"\x1b[1m\x1b[38;2;{r};{g};{b}m{text}\x1b[0m"
 
 def write_lines(buf):
     sys.stdout.write("\n".join(buf))

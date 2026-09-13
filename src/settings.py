@@ -3,7 +3,7 @@ import os
 import json
 import time
 
-from ui import fg, bg, rst, bold, dim, SH2, DIAM, BOX_H, BOX_V, BOX_TL, BOX_TR, BOX_BL, BOX_BR, BOX_LT, BOX_RT, rainbow, clear_screen, hide_cursor, show_cursor
+from ui import fg, bg, rst, bold, dim, SH2, DIAM, BOX_H, BOX_V, BOX_TL, BOX_TR, BOX_BL, BOX_BR, BOX_LT, BOX_RT, rainbow, clear_screen, hide_cursor, show_cursor, vis_len, pad_line
 from input import InputState, wait_for_any_key
 
 try:
@@ -17,16 +17,7 @@ CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.j
 
 
 def _pad_line(line, width=TERM_W):
-    visible = 0
-    i = 0
-    while i < len(line):
-        if line[i] == '\x1b':
-            while i < len(line) and line[i] != 'm':
-                i += 1
-        else:
-            visible += 1
-        i += 1
-    return line + ' ' * max(0, width - visible)
+    return pad_line(line, width)
 
 
 def _center(text, width):
@@ -246,7 +237,7 @@ def show_settings():
                 cat_idx = (cat_idx + 1) % len(categories)
                 item_idx = 0
                 scroll_offset = 0
-            if "enter" in keys or "action" in keys:
+            if "action" in keys:
                 editing = True
                 item_idx = 0
                 scroll_offset = 0
@@ -267,7 +258,7 @@ def show_settings():
                 if item_idx < scroll_offset:
                     scroll_offset = item_idx
 
-            if "enter" in keys or "action" in keys:
+            if "action" in keys:
                 if items:
                     key, val = items[item_idx]
                     full_key = f"{cat}.{key}"
@@ -414,9 +405,9 @@ def show_settings():
 
         buf.append(c + ' ' * TERM_W + rst())
         if editing:
-            foot_text = 'UP/DOWN: select  |  LEFT/RIGHT: adjust  |  ENTER: toggle  |  ESC: back to categories'
+            foot_text = 'UP/DOWN: select  |  LEFT/RIGHT: adjust  |  Space: toggle  |  ESC: back to categories'
         else:
-            foot_text = 'UP/DOWN: category  |  ENTER: edit  |  ESC: save & exit'
+            foot_text = 'UP/DOWN: category  |  Space: edit  |  ESC: save & exit'
         foot_line = c + '  ' + fg(80, 80, 100) + dim() + _center(foot_text, TERM_W - 4) + rst()
         buf.append(_pad_line(foot_line))
         buf.append(c + fg(60, 60, 80) + SH2 * TERM_W + rst())

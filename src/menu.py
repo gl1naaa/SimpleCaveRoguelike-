@@ -1,7 +1,7 @@
 import sys
 import time
 import msvcrt
-from ui import fg, bg, rst, bold, dim, BLK, SH2, DIAM, HEART, DSTAR, BOX_H, BOX_V, BOX_TL, BOX_TR, BOX_BL, BOX_BR, BOX_LT, BOX_RT, rainbow, clear_screen, hide_cursor, show_cursor
+from ui import fg, bg, rst, bold, dim, BLK, SH2, DIAM, HEART, DSTAR, BOX_H, BOX_V, BOX_TL, BOX_TR, BOX_BL, BOX_BR, BOX_LT, BOX_RT, rainbow, clear_screen, hide_cursor, show_cursor, vis_len, pad_line
 from input import InputState, wait_for_any_key
 from config import CLASSES
 
@@ -17,16 +17,7 @@ def _center(text, width):
     return text.center(width)
 
 def _pad_line(line, width=TERM_W):
-    visible = 0
-    i = 0
-    while i < len(line):
-        if line[i] == '\x1b':
-            while i < len(line) and line[i] != 'm':
-                i += 1
-        else:
-            visible += 1
-        i += 1
-    return line + ' ' * max(0, width - visible)
+    return pad_line(line, width)
 
 def _draw_frame(title, subtitle, body_lines, footer=None):
     """Draw a consistent frame for all menu screens."""
@@ -87,8 +78,8 @@ def show_name_input() -> str:
 
     body = []
     body.append('')
-    body.append(fg(180, 180, 200) + '  Choose a name for your hero.' + rst())
-    body.append(fg(120, 120, 150) + '  This name will be shown in the HUD and death screen.' + rst())
+    body.append(fg(180, 180, 200) + '  Give your hero a name. It is only cosmetic.' + rst())
+    body.append(fg(120, 120, 150) + '  Type a name and press Enter to continue, or leave it blank.' + rst())
     body.append('')
     body.append('')
 
@@ -102,9 +93,9 @@ def show_name_input() -> str:
     body.append('')
     body.append('')
     body.append(fg(120, 120, 150) + '  Suggestions: Adventurer, Shadow, Nova, Blaze, Storm' + rst())
-    body.append(fg(120, 120, 150) + '  Press Enter without typing to use default (Adventurer)' + rst())
+    body.append(fg(120, 120, 150) + '  Blank name = Adventurer' + rst())
 
-    buf = _draw_frame('ENTER YOUR NAME', 'Who dares enter the dungeon?', body)
+    buf = _draw_frame('NAME YOUR HERO', 'Who dares descend?', body)
 
     # Position cursor inside the box (line 9 from top of screen, after "  " + BOX_V)
     # We need to place cursor at the right position
@@ -151,6 +142,52 @@ def _drain_keys():
 
 
 # ============================================================
+#  Seed Input
+# ============================================================
+
+def show_seed_input() -> str:
+    """Show seed input screen.  Empty = random seed.  Returns seed string or empty."""
+    show_cursor()
+    _drain_keys()
+
+    body = []
+    body.append('')
+    body.append(fg(180, 180, 200) + '  Optional: type a seed to replay the same dungeon.' + rst())
+    body.append(fg(120, 120, 150) + '  Leave it blank for a fresh random world.' + rst())
+    body.append('')
+    body.append('')
+
+    box_w = 40
+    top = BOX_TL + BOX_H * (box_w - 2) + BOX_TR
+    bot = BOX_BL + BOX_H * (box_w - 2) + BOX_BR
+    body.append(fg(80, 80, 100) + '  ' + top + rst())
+    body.append(fg(80, 80, 100) + '  ' + BOX_V + rst() + fg(80, 80, 100) + BOX_V + rst())
+    body.append(fg(80, 80, 100) + '  ' + bot + rst())
+    body.append('')
+    body.append('')
+    body.append(fg(120, 120, 150) + '  Press Enter on an empty line for a random seed.' + rst())
+
+    buf = _draw_frame('SEED', 'Deterministic dungeon generation', body)
+
+    sys.stdout.write('\n'.join(buf))
+    sys.stdout.flush()
+    time.sleep(0.1)
+
+    try:
+        while msvcrt.kbhit():
+            msvcrt.getch()
+        sys.stdout.write(f'\x1b[11;7H{fg(255, 255, 100)}' + ' ' * (box_w - 2) + rst())
+        sys.stdout.write(f'\x1b[11;7H')
+        sys.stdout.flush()
+        seed = input(f'{fg(255, 255, 100)}> {rst()}')
+    except (EOFError, KeyboardInterrupt):
+        seed = ''
+
+    hide_cursor()
+    return seed.strip()
+
+
+# ============================================================
 #  ASCII Art Title
 # ============================================================
 
@@ -168,16 +205,16 @@ TITLE_ART_2 = [
 # ============================================================
 
 def show_title() -> str:
-    """Show title screen, return selected action."""
+    """Beginner-friendly title screen with a clear first step and hints."""
     inp = InputState()
     t = 0.0
     selected = 0
-    options = ["NEW GAME", "SETTINGS", "CONTROLS", "QUIT"]
+    options = ["START A NEW RUN", "HOW TO PLAY", "SETTINGS", "QUIT"]
     option_descs = [
-        "Begin your adventure",
-        "Configure game settings",
-        "Learn the controls",
-        "Leave the dungeon",
+        "Create a hero and enter the dungeon",
+        "Learn movement, combat, loot and the city",
+        "Adjust display and gameplay options",
+        "Return to desktop",
     ]
 
     while True:
@@ -189,8 +226,8 @@ def show_title() -> str:
             selected = (selected + 1) % len(options)
         if "up" in keys:
             selected = (selected - 1) % len(options)
-        if "enter" in keys or "action" in keys:
-            return options[selected].lower().replace(" ", "_")
+        if "action" in keys:
+            return ["new_game", "controls", "settings", "quit"][selected]
 
         buf = ["\x1b[H\x1b[2J"]
         c = bg(14, 14, 20)
@@ -203,9 +240,9 @@ def show_title() -> str:
             colored = rainbow(line, t + i * 0.1)
             buf.append(c + ' ' * max(0, (TERM_W - 50) // 2) + colored + rst())
 
-        # Subtitle
+        # Subtitle and onboarding message
         buf.append('')
-        sub = c + fg(120, 170, 210) + dim() + _center('A Roguelike Dungeon Crawler', TERM_W) + rst()
+        sub = c + fg(120, 170, 210) + dim() + _center('A terminal adventure for your first run', TERM_W) + rst()
         buf.append(_pad_line(sub))
         buf.append('')
 
@@ -213,6 +250,14 @@ def show_title() -> str:
         sep = c + fg(60, 60, 80) + '  ' + BOX_TL + BOX_H * (TERM_W - 4) + BOX_TR + rst()
         buf.append(_pad_line(sep))
         buf.append('')
+
+        intro = c + fg(210, 210, 220) + bold() + 'YOUR GOAL  ' + rst() + \
+                c + fg(150, 155, 175) + 'Explore 10 floors, collect random loot, reach the city, and defeat the final boss.' + rst()
+        buf.append(_pad_line(intro))
+        hint = c + fg(100, 220, 180) + 'NEW PLAYER TIP  ' + rst() + \
+               c + fg(150, 155, 175) + 'Start with HOW TO PLAY if this is your first visit.' + rst()
+        buf.append(_pad_line(hint))
+        buf.append(c + ' ' * TERM_W + rst())
 
         # Menu options
         for i, opt in enumerate(options):
@@ -227,14 +272,24 @@ def show_title() -> str:
             buf.append(_pad_line(desc))
             buf.append('')
 
+        # Persistent progress summary (read-only, never blocks starting a run)
+        try:
+            from meta import MetaProgression
+            points = MetaProgression().points
+            progress = f'Persistent progress: {points} Dungeon Points  |  Upgrades carry into new runs'
+        except Exception:
+            progress = 'Persistent progress is saved automatically after each run.'
+        buf.append(_pad_line(c + ' ' + fg(150, 130, 80) + progress + rst()))
+        buf.append('')
+
         # Fill
-        used = 6 + len(TITLE_ART_2) + 3 + len(options) * 3
+        used = 11 + len(TITLE_ART_2) + 3 + len(options) * 3
         while used < TERM_H - 3:
             buf.append(c + ' ' * TERM_W + rst())
             used += 1
 
         # Footer
-        foot = c + fg(80, 80, 100) + dim() + _center('WASD/Arrows: navigate  |  Enter/Space: select', TERM_W) + rst()
+        foot = c + fg(80, 80, 100) + dim() + _center('WASD / Arrows: move  |  Space: choose  |  ESC: back', TERM_W) + rst()
         buf.append(_pad_line(foot))
         buf.append(c + fg(60, 60, 80) + SH2 * TERM_W + rst())
 
@@ -351,7 +406,7 @@ def show_class_select() -> str:
         if "right" in keys:
             selected = (selected + 1) % len(class_names)
             t = 0.0
-        if "enter" in keys or "action" in keys:
+        if "action" in keys:
             return class_names[selected]
 
         buf = ["\x1b[H\x1b[2J"]
@@ -362,15 +417,15 @@ def show_class_select() -> str:
         buf.append('')
         title_line = c + '  ' + fg(255, 215, 0) + bold() + _center('CHOOSE YOUR CLASS', TERM_W - 4) + rst()
         buf.append(_pad_line(title_line))
-        sub_line = c + '  ' + fg(120, 120, 150) + dim() + _center('Use LEFT/RIGHT to browse, Enter to confirm', TERM_W - 4) + rst()
+        sub_line = c + '  ' + fg(120, 120, 150) + dim() + _center('Browse a class with LEFT/RIGHT  |  Space selects it  |  ESC goes back', TERM_W - 4) + rst()
         buf.append(_pad_line(sub_line))
         buf.append('')
         buf.append(c + fg(60, 60, 80) + '  ' + BOX_TL + BOX_H * (TERM_W - 4) + BOX_TR + rst())
         buf.append('')
 
         # Class cards - horizontal layout
-        card_w = 28
-        gap = 3
+        card_w = 18
+        gap = 1
         total_w = len(class_names) * card_w + (len(class_names) - 1) * gap
         start_x = (TERM_W - total_w) // 2
 
@@ -458,13 +513,24 @@ def show_class_select() -> str:
             sk_entry = c + f'    {fg(80, 80, 100)}{keys_list[j]}:{rst()} {fg(180, 180, 200)}{sk}{rst()}'
             buf.append(_pad_line(sk_entry))
 
+        class_tips = {
+            "swordsman": "Beginner-friendly: high HP and forgiving melee combat.",
+            "archer": "Keep distance and use corridors to control enemies.",
+            "mage": "Powerful spells, but watch your MP carefully.",
+            "summoner": "Let summons distract enemies while you cast.",
+            "healer": "Support-only class: heal and buff your random party.",
+            "rogue": "Fast critical strikes; avoid standing in open fights.",
+        }
+        buf.append(_pad_line(c + '  ' + fg(100, 220, 180) + 'STARTER TIP: ' + rst()
+                             + fg(170, 175, 190) + class_tips.get(sel_class, '') + rst()))
+
         # Fill to bottom
         used = len(buf) + 1
         while used < TERM_H - 2:
             buf.append(c + ' ' * TERM_W + rst())
             used += 1
 
-        foot = c + fg(80, 80, 100) + dim() + _center('LEFT/RIGHT: browse  |  Enter: confirm  |  ESC: back', TERM_W) + rst()
+        foot = c + fg(80, 80, 100) + dim() + _center('LEFT/RIGHT: browse  |  Space: confirm  |  ESC: back', TERM_W) + rst()
         buf.append(_pad_line(foot))
         buf.append(c + fg(60, 60, 80) + SH2 * TERM_W + rst())
 
@@ -485,16 +551,17 @@ def show_controls():
 
     while True:
         keys = inp.read()
-        if "quit" in keys or "enter" in keys or "action" in keys:
+        if "quit" in keys or "action" in keys:
             return
 
         controls = [
             ("WASD / Arrows", "Move through the dungeon"),
-            ("SPACE",         "Interact / Attack enemies"),
+            ("SPACE",         "Interact, open chests, descend and buy"),
             ("Z X C V B",     "Use skills (5 slots)"),
             ("E",             "Open inventory"),
             ("DEL",           "Delete item from inventory"),
-            ("ESC",           "Pause / Quit to menu"),
+            ("TAB",           "Inspect nearby tiles and enemies"),
+            ("ESC",           "Leave the current screen / run"),
         ]
 
         body = []
@@ -507,9 +574,11 @@ def show_controls():
         body.append(fg(120, 120, 150) + '    Combat: walk into enemies to attack' + rst())
         body.append(fg(120, 120, 150) + '    Find stairs (>) to go deeper' + rst())
         body.append(fg(120, 120, 150) + '    Open chests (=) for loot' + rst())
+        body.append(fg(100, 220, 180) + '    City tip: visit the tavern ($) to hire or dismiss allies' + rst())
+        body.append(fg(100, 220, 180) + '    Healers only support; damage classes attack by moving into range' + rst())
 
         buf = _draw_frame('CONTROLS', 'Master the dungeon', body,
-                          footer='Press any key to go back')
+                          footer='Space or ESC: go back')
 
         sys.stdout.write('\n'.join(buf))
         sys.stdout.flush()
@@ -521,15 +590,20 @@ def show_controls():
 #  Death Screen
 # ============================================================
 
-def show_death(floor: int, turns: int, killed: int, player_name: str, class_name: str):
-    """Show death screen, then return to main menu."""
+def show_death(floor: int, turns: int, killed: int, player_name: str, class_name: str, stats=None):
+    """Show death screen.  *stats* is an optional RunTracker.to_dict() for the extended view."""
+    from run_stats import RunTracker
+
     inp = InputState()
     t = 0.0
     time.sleep(0.3)
 
+    # Pre-fetch best record once
+    best = RunTracker.get_best_record()
+
     while True:
         keys = inp.read()
-        if "quit" in keys or "enter" in keys or "action" in keys:
+        if "quit" in keys or "action" in keys:
             return
 
         body = []
@@ -546,28 +620,71 @@ def show_death(floor: int, turns: int, killed: int, player_name: str, class_name
         body.append('')
         body.append('')
 
-        # Stats in a box
-        stats = [
-            (fg(160, 160, 180) + '  Player:', fg(255, 255, 100) + bold() + f' {player_name}' + rst()),
-            (fg(160, 160, 180) + '  Class:',  fg(255, 255, 100) + f' {class_name}' + rst()),
-            (fg(160, 160, 180) + '  Floor:',  fg(220, 190, 80) + f' {floor}' + rst()),
-            (fg(160, 160, 180) + '  Turns:',  fg(220, 190, 80) + f' {turns}' + rst()),
-            (fg(160, 160, 180) + '  Killed:', fg(220, 190, 80) + f' {killed}' + rst()),
-        ]
-        for label, val in stats:
-            body.append(f'    {label}{val}')
+        if stats:
+            # ---- Extended death screen ----
+            elapsed_str = stats.get("elapsed_formatted", "?")
+            cause = stats.get("cause_of_death", "Unknown")
+            dmg_dealt = stats.get("damage_dealt", 0)
+            dmg_taken = stats.get("damage_taken", 0)
+            total_kills = stats.get("kills", killed)
+            top_skills = stats.get("top_skills", [])
+            unique_items = stats.get("unique_items", [])
+
+            lines = [
+                (fg(160, 160, 180) + '  Player:',    fg(255, 255, 100) + bold() + f' {player_name}' + rst()),
+                (fg(160, 160, 180) + '  Class:',      fg(255, 255, 100) + f' {class_name}' + rst()),
+                (fg(160, 160, 180) + '  Floor:',      fg(220, 190, 80) + f' {floor}' + rst()),
+                (fg(160, 160, 180) + '  Time:',       fg(220, 190, 80) + f' {elapsed_str}' + rst()),
+                (fg(160, 160, 180) + '  Cause:',      fg(200, 80, 80) + f' {cause}' + rst()),
+                (fg(160, 160, 180) + '  Turns:',      fg(220, 190, 80) + f' {turns}' + rst()),
+                (fg(160, 160, 180) + '  Dealt:',      fg(255, 150, 150) + f' {dmg_dealt}' + rst()),
+                (fg(160, 160, 180) + '  Taken:',      fg(255, 100, 100) + f' {dmg_taken}' + rst()),
+                (fg(160, 160, 180) + '  Kills:',      fg(220, 190, 80) + f' {total_kills}' + rst()),
+            ]
+            for label, val in lines:
+                body.append(f'    {label}{val}')
+
+            # Top 3 skills
+            if top_skills:
+                body.append('')
+                body.append(f'    {fg(160, 160, 180)}  Top skills:{rst()}')
+                for sk_name, sk_count in top_skills[:3]:
+                    body.append(f'      {fg(100, 200, 100)}{sk_name}{rst()} x{sk_count}')
+
+            # Unique items
+            if unique_items:
+                body.append('')
+                body.append(f'    {fg(160, 160, 180)}  Loot ({len(unique_items)} unique):{rst()}')
+                shown = unique_items[:5]
+                body.append(f'      {fg(220, 190, 80)}{", ".join(shown)}{rst()}')
+                if len(unique_items) > 5:
+                    body.append(f'      {fg(120, 120, 150)}...and {len(unique_items) - 5} more{rst()}')
+
+            # Best record
+            if best and best.get("floor", 0) > 0:
+                body.append('')
+                best_floor = best.get("floor", "?")
+                best_time = best.get("elapsed_formatted", "?")
+                body.append(f'    {fg(100, 180, 255)}  Best record: Floor {best_floor} ({best_time}){rst()}')
+        else:
+            # ---- Legacy death screen (no stats) ----
+            legacy_stats = [
+                (fg(160, 160, 180) + '  Player:', fg(255, 255, 100) + bold() + f' {player_name}' + rst()),
+                (fg(160, 160, 180) + '  Class:',  fg(255, 255, 100) + f' {class_name}' + rst()),
+                (fg(160, 160, 180) + '  Floor:',  fg(220, 190, 80) + f' {floor}' + rst()),
+                (fg(160, 160, 180) + '  Turns:',  fg(220, 190, 80) + f' {turns}' + rst()),
+                (fg(160, 160, 180) + '  Killed:', fg(220, 190, 80) + f' {killed}' + rst()),
+            ]
+            for label, val in legacy_stats:
+                body.append(f'    {label}{val}')
 
         body.append('')
         body.append('')
         body.append(fg(120, 120, 150) + '    The dungeon claims another soul...' + rst())
 
+        footer_text = 'Press any key to return to menu  |  R - retry with same class'
         buf = _draw_frame('GAME OVER', f'You fell on floor {floor}', body,
-                          footer='Press any key to return to menu')
-
-        # Rainbow glitch effect on title
-        if int(t * 3) % 7 == 0:
-            # Occasional flicker
-            pass
+                          footer=footer_text)
 
         sys.stdout.write('\n'.join(buf))
         sys.stdout.flush()
@@ -599,7 +716,7 @@ def show_victory(floor: int, turns: int, killed: int):
 
     while True:
         keys = inp.read()
-        if "quit" in keys or "enter" in keys or "action" in keys:
+        if "quit" in keys or "action" in keys:
             return
 
         body = []

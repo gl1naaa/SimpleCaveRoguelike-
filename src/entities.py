@@ -1,5 +1,6 @@
 import time
 import random
+import copy
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Tuple
 from inventory import Inventory, rarity_color
@@ -54,6 +55,12 @@ class Entity:
         b = int(b * brightness)
         return f"\x1b[1m\x1b[38;2;{r};{g};{b}m{self.char}\x1b[0m"
 
+    def heal(self, amount: int) -> int:
+        """Restore HP for any living entity and return the actual amount."""
+        before = self.hp
+        self.hp = min(self.hp + max(0, int(amount)), self.max_hp)
+        return self.hp - before
+
 
 # ============================================================
 #  Player
@@ -73,7 +80,7 @@ CLASS_BASE_STATS = {
     "archer":    {"str": 8,  "agi": 12, "int": 6},
     "mage":      {"str": 6,  "agi": 8, "int": 12},
     "summoner":  {"str": 6,  "agi": 8, "int": 12},
-    "healer":    {"str": 6,  "agi": 6, "int": 14},
+    "healer":    {"str": 7,  "agi": 7, "int": 13},
     "rogue":     {"str": 7,  "agi": 15, "int": 5},
 }
 
@@ -82,7 +89,7 @@ CLASS_BASE_HP = {
     "archer":    12,
     "mage":      16,
     "summoner":  16,
-    "healer":    12,
+    "healer":    14,
     "rogue":     11,
 }
 
@@ -90,6 +97,7 @@ CLASS_BASE_HP = {
 class Player(Entity):
     def __init__(self, x: int, y: int, class_name: str = "swordsman"):
         super().__init__(x, y, "@", "Hero", "255,255,100")
+        self.is_player = True
         self.class_name = class_name
         self.level = 1
         self.xp = 0
@@ -132,7 +140,7 @@ class Player(Entity):
             "archer":    ("Short Bow",   "weapon", "bow",   {"atk": 2}),
             "mage":      ("Wooden Wand", "weapon", "staff", {"atk": 2}),
             "summoner":  ("Old Orb",     "weapon", "orb",   {"atk": 1}),
-            "healer":    ("Wooden Mace", "weapon", "mace",  {"atk": 2}),
+            "healer":    ("Wooden Mace", "weapon", "mace",  {"atk": 3}),
             "rogue":     ("Rusty Dagger","weapon", "dagger",{"atk": 3}),
         }
         wname, wtype, wsub, wstats = weapon_map.get(class_name, ("Rusty Sword", "weapon", "sword", {"atk": 3}))
@@ -175,7 +183,7 @@ class Player(Entity):
         # Healer: higher magic power, lower atk
         if self.class_name == "healer":
             self._magic_power = int(i * 0.7 + s * 0.1)
-            self._atk = int(self._atk * 0.7)
+            self._atk = int(self._atk * 0.9)
             self._hp_regen = s * 0.02 + 0.5
             self._mp_regen = 2.0 + i * 0.2
         # Rogue: higher crit, higher dodge
@@ -257,6 +265,7 @@ class Player(Entity):
             return False
         if skill.class_req != self.class_name:
             return False
+        skill = copy.deepcopy(skill)
         self.learned_skills.append(skill_id)
         if skill.slot < len(self.skills):
             self.skills[skill.slot] = skill
@@ -325,7 +334,9 @@ class Player(Entity):
         return actual
 
     def heal(self, amount: int):
-        self.hp = min(self.hp + amount, self.max_hp)
+        before = self.hp
+        self.hp = min(self.hp + max(0, int(amount)), self.max_hp)
+        return self.hp - before
 
     def restore_mp(self, amount):
         self.mp = min(self.mp + int(amount), self.max_mp)
@@ -358,6 +369,16 @@ MONSTER_TYPES = {
     "dark_mage":       {"char": "X", "color": "180,0,255",   "hp": 18, "atk": 18,"xp": 22, "speed": 0.7,
                         "ranged": True, "attack_range": 7,
                         "projectile_char": "*", "projectile_color": "200,50,255"},
+    "pack_hunter":     {"char": "h", "color": "220,150,60", "hp": 28, "atk": 11, "xp": 16, "speed": 1.7,
+                        "behavior": "pack", "aggro_range": 9},
+    "stone_guard":     {"char": "G", "color": "130,140,155", "hp": 105, "atk": 19, "xp": 34, "speed": 0.45,
+                        "behavior": "guard", "defense": 8, "aggro_range": 7},
+    "venom_stalker":   {"char": "v", "color": "90,220,120", "hp": 34, "atk": 13, "xp": 24, "speed": 1.35,
+                        "behavior": "skirmisher", "ranged": True, "attack_range": 4, "spell": "slow",
+                        "projectile_char": "~", "projectile_color": "80,220,120"},
+    "blood_cultist":   {"char": "c", "color": "210,50,100", "hp": 42, "atk": 16, "xp": 30, "speed": 0.8,
+                        "behavior": "coward", "flee_hp": 0.35, "ranged": True, "attack_range": 5,
+                        "projectile_char": "+", "projectile_color": "255,80,140"},
 }
 
 
@@ -372,7 +393,7 @@ class Monster(Entity):
         hp_mult = 1 + floor * 0.3
         self.hp = int(info["hp"] * hp_mult)
         self.max_hp = self.hp
-        self.defense = int(floor * MONSTER_DEF_SCALE)
+        self.defense = int(info.get("defense", 0) + floor * MONSTER_DEF_SCALE)
         self.dodge = 0.05
         self.aggro_range = 6
         self.last_move = 0.0
@@ -385,6 +406,33 @@ class Monster(Entity):
         self.spell = info.get("spell", "")
         self.projectile_char = info.get("projectile_char", "-")
         self.projectile_color = info.get("projectile_color", "200,200,200")
+        self.behavior = info.get("behavior", "basic")
+        self.flee_hp = info.get("flee_hp", 0.0)
+        self.aggro_range = info.get("aggro_range", 6)
+        self.is_elite = False
+        self.elite_affix = ""
+
+    def promote_elite(self, affix: str = ""):
+        """Turn this monster into an elite variant with a readable affix."""
+        affixes = {
+            "vicious": (1.25, 1.0, 0, "Vicious"),
+            "armored": (1.0, 1.35, 0, "Armored"),
+            "swift": (1.0, 1.0, 1.45, "Swift"),
+            "arcane": (1.15, 1.0, 0, "Arcane"),
+        }
+        import random as _random
+        key = affix if affix in affixes else _random.choice(list(affixes))
+        atk_mult, def_mult, speed_mult, label = affixes[key]
+        self.atk = int(self.atk * atk_mult)
+        self.defense = int(self.defense * def_mult) + 1
+        self.speed *= speed_mult or 1.0
+        self.max_hp = int(self.max_hp * 1.35)
+        self.hp = self.max_hp
+        self.xp_value = int(self.xp_value * 1.6)
+        self.is_elite = True
+        self.elite_affix = label
+        self.name = f"{label} {self.name}"
+        self.color = "255,190,70"
 
     def can_see_player(self, player_x: int, player_y: int) -> bool:
         dx = abs(self.x - player_x)
@@ -807,7 +855,9 @@ class NPCEnemy(Entity):
         return dmg
 
     def heal(self, amount: int):
-        self.hp = min(self.hp + amount, self.max_hp)
+        before = self.hp
+        self.hp = min(self.hp + max(0, int(amount)), self.max_hp)
+        return self.hp - before
 
     def restore_mp(self, amount: int):
         self.mp = min(self.mp + int(amount), self.max_mp)
@@ -871,13 +921,25 @@ class NPCAlly(Entity):
         self.last_attack = 0.0
         self.last_spell = 0.0
         self.attack_delay = 0.6 if class_name == "rogue" else 0.8
-        self.speed = 1.0
+        # Hired allies keep up with the player while retaining class flavor.
+        self.speed = {
+            "rogue": 1.40,
+            "archer": 1.30,
+            "mage": 1.25,
+            "healer": 1.20,
+            "swordsman": 1.20,
+        }.get(class_name, 1.20)
         self.aggro_range = 8
         self.dodge = 0.10 if class_name == "rogue" else 0.05
-        self.ranged = class_name in ("archer", "mage")
-        self.attack_range = 5 if class_name == "archer" else 6 if class_name == "mage" else 1
+        self.ranged = class_name in ("archer", "mage", "healer")
+        self.attack_range = (5 if class_name == "archer" else 6 if class_name == "mage"
+                             else 4 if class_name == "healer" else 1)
         self.healer = class_name == "healer"
         self.is_ally = True
+        self.is_hired = True
+        self.hire_cost = 0
+        self.loot_bag = []
+        self.equipment_score = 0
 
     def _recalc_stats(self):
         s = self.base_str
@@ -885,18 +947,40 @@ class NPCAlly(Entity):
         i = self.base_int
         base_hp_map = {"swordsman": 40, "archer": 25, "mage": 20, "healer": 22, "rogue": 23}
         base_hp = base_hp_map.get(self.class_name, 30)
-        self.max_hp = base_hp + s * 2 + self.level * 3
+        self.max_hp = int((base_hp + s * 2 + self.level * 3) * 0.94)
         self.max_mp = 30 + i * 3 + self.level * 2
         self._atk = 10 + int(s * 0.5)
         self.defense = 3 + int(a * 0.3)
+        gear_score = getattr(self, "equipment_score", 0)
+        self.max_hp += gear_score // 10
+        self._atk += gear_score // 15
+        self.defense += gear_score // 20
         self._crit = 0.05 + a * 0.003
         if self.class_name == "rogue":
             self._crit = 0.12 + a * 0.005
         if self.class_name == "healer":
-            self._atk = int(self._atk * 0.7)
+            self._atk = int(self._atk * 0.9)
         self._magic_power = int(i * 0.5)
         if self.class_name == "healer":
             self._magic_power = int(i * 0.7)
+
+    def receive_loot(self, item) -> bool:
+        """Keep useful chest loot and convert its stats into a small ally upgrade."""
+        if item is None:
+            return False
+        stats = getattr(item, "stats", {})
+        score = sum(max(0, int(v)) for v in stats.values())
+        if score <= 0:
+            return False
+        self.loot_bag.append(item)
+        self.equipment_score += score
+        self.base_str += int(stats.get("str", 0) * 0.25)
+        self.base_agi += int(stats.get("agi", 0) * 0.25)
+        self.base_int += int(stats.get("int", 0) * 0.25)
+        self._recalc_stats()
+        self.hp = self.max_hp
+        self.mp = self.max_mp
+        return True
 
     @property
     def atk(self):
@@ -949,7 +1033,9 @@ class NPCAlly(Entity):
         return dmg
 
     def heal(self, amount: int):
-        self.hp = min(self.hp + amount, self.max_hp)
+        before = self.hp
+        self.hp = min(self.hp + max(0, int(amount)), self.max_hp)
+        return self.hp - before
 
     def restore_mp(self, amount: int):
         self.mp = min(self.mp + int(amount), self.max_mp)

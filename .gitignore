@@ -4,3 +4,5 @@ __pycache__/
 *.lnk
 *.pyc
 *.pyo
+meta_save.json
+src/run_history.json

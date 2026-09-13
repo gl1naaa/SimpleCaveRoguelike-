@@ -5,7 +5,32 @@ from typing import Optional, Tuple, List, Dict, TYPE_CHECKING
 if TYPE_CHECKING:
     from entities import Player, Monster, Boss, Ally
 
-from config import CRIT_MULTIPLIER
+from config import CRIT_MULTIPLIER, SKILL_SCALE_DEFAULT_COEF
+
+# ============================================================
+#  Elemental Combo System
+# ============================================================
+
+COMBO_TABLE = {
+    ('burn', 'physical'): (1.5, "BURNOUT!"),
+    ('frozen', 'fire'):   (2.0, "FROSTBITE!"),
+    ('stun', 'backstab'): ('crit', "EXECUTE!"),
+    ('burn', 'fire'):     (1.25, "INFERNO!"),
+    ('slow', 'lightning'): (1.3, "OVERLOAD!"),
+}
+
+# Map actual in-game status names to combo table keys
+_STATUS_TO_COMBO = {
+    'slow': 'frozen',
+}
+
+_COMBO_COLORS = {
+    "BURNOUT!":   "255,160,0",
+    "FROSTBITE!": "0,220,255",
+    "EXECUTE!":   "255,50,50",
+    "INFERNO!":   "255,100,0",
+    "OVERLOAD!":  "200,160,255",
+}
 
 
 class DamagePopup:
@@ -31,7 +56,8 @@ class DamagePopup:
 
 class Projectile:
     def __init__(self, sx: int, sy: int, tx: int, ty: int, char: str, color: str,
-                 speed: float = 8.0, on_hit=None, pierce: bool = False, aoe_radius: int = 0):
+                 speed: float = 8.0, on_hit=None, pierce: bool = False, aoe_radius: int = 0,
+                 element: str = "physical"):
         self.sx = sx
         self.sy = sy
         self.tx = tx
@@ -44,6 +70,7 @@ class Projectile:
         self.on_hit = on_hit
         self.pierce = pierce
         self.aoe_radius = aoe_radius
+        self.element = element
         self.done = False
         self.hit_targets = set()
         self.spawn_time = time.time()
@@ -100,6 +127,7 @@ class CombatSystem:
     def __init__(self):
         self.popups: List[DamagePopup] = []
         self.projectiles: List[Projectile] = []
+        self.fx = None
         self.attack_cooldown = 0.0
         self.ally_attack_cooldown = 0.0
         self.attack_delay = 0.25
@@ -122,13 +150,26 @@ class CombatSystem:
 
     def _add_popup(self, x, y, text, color):
         self.popups.append(DamagePopup(x, y, text, color))
+        if self.fx:
+            try:
+                self.fx.flash(x, y, *[int(v) for v in color.split(",")], duration=0.10)
+                if str(text).startswith("+"):
+                    self.fx.spawn_heal(x, y, n=3)
+                elif str(text).startswith("-") or str(text) in ("HIT", "BANG", "MISS"):
+                    self.fx.spawn_hit(x, y, color=color, n=3)
+                elif str(text) in ("FIRE", "NOVA", "BURN"):
+                    self.fx.spawn_explosion(x, y, n=8)
+            except Exception:
+                pass
 
-    def add_projectile(self, sx, sy, tx, ty, char, color, speed=8.0, on_hit=None, pierce=False, aoe_radius=0):
-        self.projectiles.append(Projectile(sx, sy, tx, ty, char, color, speed, on_hit, pierce, aoe_radius))
+    def add_projectile(self, sx, sy, tx, ty, char, color, speed=8.0, on_hit=None, pierce=False, aoe_radius=0, element="physical"):
+        self.projectiles.append(Projectile(sx, sy, tx, ty, char, color, speed, on_hit, pierce, aoe_radius, element))
 
-    def update_projectiles(self, monsters, bosses, player, log, dt, now, npc_enemies=None):
+    def update_projectiles(self, monsters, bosses, player, log, dt, now, npc_enemies=None, allies=None):
         if npc_enemies is None:
             npc_enemies = []
+        if allies is None:
+            allies = []
         for proj in self.projectiles[:]:
             arrived = proj.update(dt)
             if arrived:
@@ -137,24 +178,28 @@ class CombatSystem:
                 for m in list(monsters):
                     if m.alive and m.x == ix and m.y == iy and id(m) not in proj.hit_targets:
                         proj.hit_targets.add(id(m))
-                        if proj.on_hit:
-                            proj.on_hit(m, ix, iy)
+                        self._fire_on_hit_with_combo(proj, m, ix, iy)
                         if not proj.pierce:
                             proj.done = True
                             break
                 for b in list(bosses):
                     if b.alive and b.x == ix and b.y == iy and id(b) not in proj.hit_targets:
                         proj.hit_targets.add(id(b))
-                        if proj.on_hit:
-                            proj.on_hit(b, ix, iy)
+                        self._fire_on_hit_with_combo(proj, b, ix, iy)
                         if not proj.pierce:
                             proj.done = True
                             break
                 for ne in list(npc_enemies):
                     if ne.alive and ne.x == ix and ne.y == iy and id(ne) not in proj.hit_targets:
                         proj.hit_targets.add(id(ne))
-                        if proj.on_hit:
-                            proj.on_hit(ne, ix, iy)
+                        self._fire_on_hit_with_combo(proj, ne, ix, iy)
+                        if not proj.pierce:
+                            proj.done = True
+                            break
+                for ally in list(allies):
+                    if ally.alive and ally.x == ix and ally.y == iy and id(ally) not in proj.hit_targets:
+                        proj.hit_targets.add(id(ally))
+                        self._fire_on_hit_with_combo(proj, ally, ix, iy)
                         if not proj.pierce:
                             proj.done = True
                             break
@@ -172,17 +217,17 @@ class CombatSystem:
                         if m.alive and id(m) not in proj.hit_targets:
                             d = math.sqrt((m.x - ix)**2 + (m.y - iy)**2)
                             if d <= proj.aoe_radius:
-                                proj.on_hit(m, m.x, m.y)
+                                self._fire_on_hit_with_combo(proj, m, m.x, m.y)
                     for b in list(bosses):
                         if b.alive and id(b) not in proj.hit_targets:
                             d = math.sqrt((b.x - ix)**2 + (b.y - iy)**2)
                             if d <= proj.aoe_radius:
-                                proj.on_hit(b, b.x, b.y)
+                                self._fire_on_hit_with_combo(proj, b, b.x, b.y)
                     for ne in list(npc_enemies):
                         if ne.alive and id(ne) not in proj.hit_targets:
                             d = math.sqrt((ne.x - ix)**2 + (ne.y - iy)**2)
                             if d <= proj.aoe_radius:
-                                proj.on_hit(ne, ne.x, ne.y)
+                                self._fire_on_hit_with_combo(proj, ne, ne.x, ne.y)
         self.projectiles = [p for p in self.projectiles if p.alive()]
 
     def get_projectile_at(self, x: int, y: int) -> Optional[Projectile]:
@@ -238,18 +283,90 @@ class CombatSystem:
         return total_dmg
 
     def get_speed_mult(self, entity) -> float:
-        """Get speed multiplier from slow effects."""
+        """Get final movement/attack speed multiplier from active effects."""
+        mult = 1.0
         if self.has_effect(entity, "slow"):
             power = self.get_effect_power(entity, "slow")
-            return 1.0 - (power / 100.0)
-        return 1.0
+            mult *= max(0.05, 1.0 - (power / 100.0))
+        if self.has_effect(entity, "haste"):
+            power = self.get_effect_power(entity, "haste")
+            mult *= 1.0 + (power / 100.0)
+        return mult
 
     def is_stunned(self, entity) -> bool:
         return self.has_effect(entity, "stun")
 
+    # ---- Elemental Combo System ----
+
+    def get_active_status_names(self, entity):
+        """Get set of active status effect names on entity."""
+        eid = self._entity_id(entity)
+        return {e.name for e in self.effects.get(eid, []) if not e.expired()}
+
+    def _resolve_attack_element(self, skill=None):
+        """Determine the elemental type of an attack from a skill."""
+        if skill is not None:
+            if hasattr(skill, 'element') and skill.element:
+                return skill.element
+            name_lower = skill.name.lower()
+            # Backstab / rogue stealth attacks
+            if 'backstab' in name_lower or 'shadow' in name_lower:
+                return 'backstab'
+            if skill.effect == 'burn' or 'fire' in name_lower or 'flame' in name_lower:
+                return 'fire'
+            if skill.effect == 'slow' or 'frost' in name_lower or 'ice' in name_lower or 'blizzard' in name_lower:
+                return 'ice'
+            if 'lightning' in name_lower:
+                return 'lightning'
+        return 'physical'
+
+    def _get_combo(self, entity, skill=None, element=None):
+        """Check for elemental combo. Returns (multiplier, combo_name) or (1.0, None)."""
+        active = self.get_active_status_names(entity)
+        if not active:
+            return (1.0, None)
+        attack_element = element if element else self._resolve_attack_element(skill)
+        # Check both original status names and mapped combo keys
+        possible_statuses = set()
+        for s in active:
+            possible_statuses.add(s)
+            possible_statuses.add(_STATUS_TO_COMBO.get(s, s))
+        for cs in possible_statuses:
+            key = (cs, attack_element)
+            if key in COMBO_TABLE:
+                return COMBO_TABLE[key]
+        return (1.0, None)
+
+    def _fire_on_hit_with_combo(self, proj, target, x, y):
+        """Fire projectile on_hit and apply elemental combo bonus."""
+        if proj.on_hit:
+            hp_before = target.hp
+            proj.on_hit(target, x, y)
+            actual_dmg = hp_before - target.hp
+            if actual_dmg > 0:
+                combo_mult, combo_name = self._get_combo(target, element=proj.element)
+                if combo_name:
+                    popup_color = _COMBO_COLORS.get(combo_name, "255,255,100")
+                    self._add_popup(target.x, target.y - 1, f"{combo_name}", popup_color)
+                    if combo_mult == 'crit':
+                        extra = int(actual_dmg * (CRIT_MULTIPLIER - 1))
+                    else:
+                        extra = int(actual_dmg * (combo_mult - 1))
+                    if extra > 0:
+                        target.take_damage(extra)
+                        self._add_popup(target.x, target.y, f"-{extra}", popup_color)
+                    if combo_name == "FROSTBITE!":
+                        self._remove_effect(target, "slow")
+
+    def _remove_effect(self, entity, effect_name):
+        """Remove a specific status effect from entity."""
+        eid = self._entity_id(entity)
+        if eid in self.effects:
+            self.effects[eid] = [e for e in self.effects[eid] if e.name != effect_name]
+
     # ---- Player attacks ----
 
-    def player_attack_monster(self, player, monster, now: float) -> Optional[Tuple[int, bool]]:
+    def player_attack_monster(self, player, monster, now: float, skill=None) -> Optional[Tuple[int, bool]]:
         if not self.can_attack(now):
             return None
         self.attack_cooldown = now
@@ -261,22 +378,59 @@ class CombatSystem:
         if dmg == 0:
             self._add_popup(monster.x, monster.y, "MISS", "200,200,200")
             return 0, False
+
+        # Elemental combo check (before damage applied)
+        combo_mult, combo_name = self._get_combo(monster, skill)
+        if combo_name:
+            if combo_mult == 'crit':
+                crit = True
+                dmg = int(dmg * CRIT_MULTIPLIER)
+            else:
+                dmg = int(dmg * combo_mult)
+            popup_color = _COMBO_COLORS.get(combo_name, "255,255,100")
+            self._add_popup(monster.x, monster.y - 1, f"{combo_name}", popup_color)
+            if combo_name == "FROSTBITE!":
+                self._remove_effect(monster, "slow")
+
         monster.take_damage(dmg)
         color = "255,255,100" if crit else "255,200,200"
         self._add_popup(monster.x, monster.y, f"-{dmg}", color)
         return dmg, crit
 
-    def player_use_skill(self, player, skill, targets: list, now: float, occupied: set = None, gm=None) -> list:
+    def player_use_skill(self, player, skill, targets: list, now: float, occupied: set = None, gm=None, allies: list = None, heal_target=None) -> list:
         results = []
         atk = player.atk
         if self.has_effect(player, "buff"):
             atk = int(atk * (1 + self.get_effect_power(player, "buff") / 100.0))
 
+        # Stat scaling bonus
+        stat_bonus = 0
+        if skill.scale_stat:
+            coef = skill.scale_coef if skill.scale_coef > 0 else SKILL_SCALE_DEFAULT_COEF
+            stat_val = getattr(player, skill.scale_stat + "_stat", getattr(player, skill.scale_stat, 0))
+            stat_bonus = int(stat_val * coef)
+
         for target in targets:
             t_def = target.defense if hasattr(target, 'defense') else 0
             if self.has_effect(target, "slow"):
                 t_def = max(0, t_def - 2)
-            dmg, crit = self._calc_damage(atk + skill.damage, t_def, player.crit_chance)
+            crit_chance = player.crit_chance
+            if skill.effect == "crit_boost":
+                crit_chance += skill.effect_power / 100.0
+            dmg, crit = self._calc_damage(atk + skill.damage + stat_bonus, t_def, crit_chance)
+
+            # Elemental combo check (before damage applied)
+            combo_mult, combo_name = self._get_combo(target, skill)
+            if combo_name:
+                if combo_mult == 'crit':
+                    crit = True
+                    dmg = int(dmg * CRIT_MULTIPLIER)
+                else:
+                    dmg = int(dmg * combo_mult)
+                popup_color = _COMBO_COLORS.get(combo_name, "255,255,100")
+                self._add_popup(target.x, target.y - 1, f"{combo_name}", popup_color)
+                if combo_name == "FROSTBITE!":
+                    self._remove_effect(target, "slow")
 
             target.take_damage(dmg)
 
@@ -311,22 +465,60 @@ class CombatSystem:
                     heal = int(dmg * skill.effect_power / 100.0)
                     player.heal(heal)
                     self._add_popup(player.x, player.y, f"+{heal}", "0,255,100")
+            if skill.id == "sword_2" and target.alive:
+                self.add_effect(target, StatusEffect("weaken", 3.0, 20))
+                self._add_popup(target.x, target.y - 1, "WEAKEN", "255,180,120")
 
             results.append((dmg, crit))
 
-        # Self-targeted effects — ALWAYS execute
+        # Self/ally-targeted effects — ALWAYS execute
         if skill.effect == "heal":
-            heal = int(player.max_hp * skill.effect_power / 100.0)
-            player.heal(heal)
-            self._add_popup(player.x, player.y, f"+{heal}", "0,255,100")
+            target = heal_target if heal_target is not None and heal_target.alive else player
+            heal = int(target.max_hp * skill.effect_power / 100.0)
+            before = target.hp
+            target.heal(heal)
+            actual = target.hp - before
+            target.last_heal_time = now
+            target.last_heal_amount = actual
+            self._add_popup(target.x, target.y, f"+{actual}", "0,255,100")
+        elif skill.effect == "aoe_heal":
+            targets_to_heal = [player]
+            if allies:
+                targets_to_heal.extend(
+                    ally for ally in allies
+                    if ally.alive and math.sqrt((player.x - ally.x)**2 + (player.y - ally.y)**2) <= 3
+                )
+            for target in targets_to_heal:
+                amount = int(target.max_hp * skill.effect_power / 100.0)
+                before = target.hp
+                target.heal(amount)
+                actual = target.hp - before
+                target.last_heal_time = now
+                target.last_heal_amount = actual
+                self._add_popup(target.x, target.y, f"+{actual}", "0,255,100")
         elif skill.effect == "buff":
             self.add_effect(player, StatusEffect("buff", skill.effect_duration, skill.effect_power))
             self._add_popup(player.x, player.y - 1, f"+{skill.effect_power}% ATK", "255,200,0")
+        elif skill.effect == "ally_buff":
+            self.add_effect(player, StatusEffect("buff", skill.effect_duration, skill.effect_power))
+            self._add_popup(player.x, player.y - 1, f"+{skill.effect_power}% ATK", "255,200,0")
+            if allies:
+                for ally in allies:
+                    if ally.alive:
+                        dist = math.sqrt((player.x - ally.x)**2 + (player.y - ally.y)**2)
+                        if dist <= 3:
+                            self.add_effect(ally, StatusEffect("buff", skill.effect_duration, skill.effect_power))
+                            self._add_popup(ally.x, ally.y - 1, f"+{skill.effect_power}% ATK", "255,200,0")
         elif skill.effect == "shield":
             self.add_effect(player, StatusEffect("shield", skill.effect_duration, skill.effect_power))
             self._add_popup(player.x, player.y - 1, f"SHIELD {skill.effect_power}", "100,200,255")
         elif skill.effect == "teleport":
             pass
+
+        # Mana restore on skill use
+        if skill.mana_regen > 0:
+            player.restore_mp(skill.mana_regen)
+            self._add_popup(player.x, player.y, f"+{skill.mana_regen} MP", "100,150,255")
 
         return results
 
@@ -345,7 +537,13 @@ class CombatSystem:
         player_dodge = getattr(player, 'dodge_chance', 0.02)
         if self.has_effect(player, "evasion"):
             player_dodge += self.get_effect_power(player, "evasion") / 100.0
-        dmg, crit = self._calc_damage(monster.atk, player.defense, 0.0, player_dodge)
+        player_def = player.defense
+        if self.has_effect(player, "def_down"):
+            player_def = max(0, int(player_def * (1.0 - self.get_effect_power(player, "def_down") / 100.0)))
+        attacker_atk = monster.atk
+        if self.has_effect(monster, "weaken"):
+            attacker_atk = int(attacker_atk * (1.0 - self.get_effect_power(monster, "weaken") / 100.0))
+        dmg, crit = self._calc_damage(attacker_atk, player_def, 0.0, player_dodge)
         if dmg == 0:
             self._add_popup(player.x, player.y, "MISS", "200,200,200")
             return 0, False
@@ -389,7 +587,12 @@ class CombatSystem:
         player_dodge = getattr(player, 'dodge_chance', 0.02)
         if self.has_effect(player, "evasion"):
             player_dodge += self.get_effect_power(player, "evasion") / 100.0
-        dmg, crit = self._calc_damage(base_dmg, player.defense, 0.0, player_dodge)
+        player_def = player.defense
+        if self.has_effect(player, "def_down"):
+            player_def = max(0, int(player_def * (1.0 - self.get_effect_power(player, "def_down") / 100.0)))
+        if self.has_effect(boss, "weaken"):
+            base_dmg = int(base_dmg * (1.0 - self.get_effect_power(boss, "weaken") / 100.0))
+        dmg, crit = self._calc_damage(base_dmg, player_def, 0.0, player_dodge)
         if dmg == 0:
             self._add_popup(player.x, player.y, "MISS", "200,200,200")
             return 0, False
@@ -415,12 +618,39 @@ class CombatSystem:
             return actual, crit
         return 0, False
 
+    def boss_attack_ally(self, boss, ally, now: float) -> Optional[Tuple[int, bool]]:
+        """Boss melee attack against a companion when the player is unavailable."""
+        dist = abs(boss.x - ally.x) + abs(boss.y - ally.y)
+        if dist > self.meele_range:
+            return None
+        if self.is_stunned(boss):
+            self._add_popup(boss.x, boss.y, "STUNNED", "255,255,0")
+            return None
+        if (now - boss.last_attack) < boss.attack_delay:
+            return None
+        boss.last_attack = now
+        base_dmg = boss.atk
+        if boss.phase >= 2:
+            base_dmg = int(base_dmg * 1.3)
+        if boss.phase >= 3:
+            base_dmg = int(base_dmg * 1.5)
+        dmg, crit = self._calc_damage(base_dmg, getattr(ally, "defense", 0), 0.0,
+                                       getattr(ally, "dodge", 0.05))
+        if dmg == 0:
+            self._add_popup(ally.x, ally.y, "MISS", "200,200,200")
+            return 0, False
+        actual = ally.take_damage(dmg)
+        self._add_popup(ally.x, ally.y, f"-{actual}", "255,100,100")
+        return actual, crit
+
     # ---- Ally AI ----
 
     def ally_can_attack(self, now: float) -> bool:
         return (now - self.ally_attack_cooldown) >= self.attack_delay
 
     def ally_attack(self, ally, monster, now: float) -> Optional[Tuple[int, bool]]:
+        if getattr(ally, "healer", False):
+            return None
         dist = abs(ally.x - monster.x) + abs(ally.y - monster.y)
         if dist > 1:
             return None
@@ -442,7 +672,10 @@ class CombatSystem:
         if (now - monster.last_attack) < monster.attack_delay:
             return None
         monster.last_attack = now
-        dmg, crit = self._calc_damage(monster.atk, ally.defense)
+        attacker_atk = monster.atk
+        if self.has_effect(monster, "weaken"):
+            attacker_atk = int(attacker_atk * (1.0 - self.get_effect_power(monster, "weaken") / 100.0))
+        dmg, crit = self._calc_damage(attacker_atk, ally.defense)
         ally.take_damage(dmg)
         self._add_popup(ally.x, ally.y, f"-{dmg}", "255,150,150")
         return dmg, crit
@@ -459,7 +692,10 @@ class CombatSystem:
 
         def _on_hit(t, hx, hy):
             t_def = t.defense if hasattr(t, 'defense') else 0
-            dmg, crit = self._calc_damage(monster.atk, t_def, 0.0)
+            attacker_atk = monster.atk
+            if self.has_effect(monster, "weaken"):
+                attacker_atk = int(attacker_atk * (1.0 - self.get_effect_power(monster, "weaken") / 100.0))
+            dmg, crit = self._calc_damage(attacker_atk, t_def, 0.0)
             if dmg == 0:
                 self._add_popup(t.x, t.y, "MISS", "200,200,200")
                 return
@@ -517,6 +753,8 @@ class CombatSystem:
     # ---- NPC Ally ranged attack ----
 
     def npc_ally_ranged_attack(self, ally, target, now: float, log: list) -> bool:
+        if getattr(ally, "healer", False):
+            return False
         dist = math.sqrt((ally.x - target.x)**2 + (ally.y - target.y)**2)
         if dist > ally.attack_range:
             return False
@@ -545,6 +783,8 @@ class CombatSystem:
 
         if ally.class_name == "archer":
             pchar, pcolor = "-", "220,200,140"
+        elif ally.class_name == "healer":
+            pchar, pcolor = "+", "180,255,180"
         else:
             pchar, pcolor = "*", "150,150,255"
         self.add_projectile(
@@ -555,30 +795,39 @@ class CombatSystem:
 
     # ---- Healer auto-heal ----
 
-    def healer_auto_heal(self, healer, allies: list, player, now: float, log: list):
-        """Healer AI: heal nearest ally with lowest HP if below 50%."""
+    def healer_auto_heal(self, healer, allies: list, player, now: float, log: list, heal_range: int = 6):
+        """Healer AI: heal most injured ally in radius below 50% HP."""
         if not hasattr(healer, 'healer') or not healer.healer:
             return
         if not hasattr(healer, 'last_spell'):
             healer.last_spell = 0.0
         if (now - healer.last_spell) < 2.0:
             return
-        # Find target: ally with lowest HP% below 50%
+        # Find target: most injured entity in range below 50% HP
         targets = []
+        # Include healer itself for self-heal when needed
+        if healer.alive:
+            ratio = healer.hp / healer.max_hp if healer.max_hp > 0 else 0
+            if ratio < 0.5:
+                targets.append((ratio, healer))
         for a in allies:
             if a.alive and a is not healer:
-                ratio = a.hp / a.max_hp if a.max_hp > 0 else 0
+                dist = math.sqrt((healer.x - a.x)**2 + (healer.y - a.y)**2)
+                if dist <= heal_range:
+                    ratio = a.hp / a.max_hp if a.max_hp > 0 else 0
+                    if ratio < 0.5:
+                        targets.append((ratio, a))
+        if player.alive and player is not healer:
+            dist = math.sqrt((healer.x - player.x)**2 + (healer.y - player.y)**2)
+            if dist <= heal_range:
+                ratio = player.hp / player.max_hp if player.max_hp > 0 else 0
                 if ratio < 0.5:
-                    targets.append((ratio, a))
-        if player.alive:
-            ratio = player.hp / player.max_hp if player.max_hp > 0 else 0
-            if ratio < 0.5:
-                targets.append((ratio, player))
+                    targets.append((ratio, player))
         if not targets:
             return
         targets.sort(key=lambda x: x[0])
         target = targets[0][1]
-        # Heal amount
+        # Heal amount: base + INT scaling
         heal_amount = int(15 + healer.magic_power * 2)
         if hasattr(target, 'heal'):
             target.heal(heal_amount)

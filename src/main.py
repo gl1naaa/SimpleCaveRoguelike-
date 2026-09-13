@@ -50,14 +50,14 @@ if os.name == "nt":
 
         # Remove scrollbars, set to fill window
         try:
-            os.system("mode con: rate=32 delay=1")
+            os.system("mode con: rate=31 delay=1 >nul 2>&1")
         except Exception:
             pass
     except Exception:
         pass
 
 from ui import hide_cursor, show_cursor
-from menu import show_title, show_class_select, show_controls, show_name_input
+from menu import show_title, show_class_select, show_controls, show_name_input, show_seed_input
 
 
 def main():
@@ -80,6 +80,15 @@ def main():
                     continue
                 class_name = show_class_select()
                 if class_name:
+                    # Seed input: empty = random
+                    seed = show_seed_input()
+                    import random as _random
+                    import map_generator
+                    if seed:
+                        _random.seed(seed)
+                        map_generator.SEED_BASE = seed
+                    else:
+                        map_generator.SEED_BASE = None
                     from game import run_game
                     run_game(class_name, name)
                     # Clear screen before returning to menu

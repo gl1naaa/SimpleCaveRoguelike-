@@ -47,8 +47,8 @@
     "skill_miss_base": 0.1,
     "skill_miss_per_level": 0.008,
     "skill_miss_min": 0.02,
-    "monster_gold_min": 8,
-    "monster_gold_max_base": 25,
+    "monster_gold_min": 7,
+    "monster_gold_max_base": 22,
     "monster_gold_floor_mult": 3,
     "boss_gold_base": 50,
     "boss_gold_floor_mult": 20,
@@ -386,8 +386,8 @@
   "chest_loot": {
     "min_items": 1,
     "max_items": 3,
-    "gold_min": 15,
-    "gold_max": 70,
+    "gold_min": 12,
+    "gold_max": 55,
     "gold_floor_divisor": 3
   },
   "unique_items": {
@@ -410,8 +410,11 @@
     "consumable": 0.18
   },
   "class_weapon_affinity": 0.65,
+  "skills_scale_defaults": {
+    "coef": 0.3
+  },
   "city": {
-    "base_price": 50,
+    "base_price": 60,
     "price_floor_mult": 20,
     "price_index_mult": 10,
     "width": 60,
@@ -930,6 +933,24 @@
   "monster_base_stats": {
     "base_dodge": 0.05,
     "aggro_range": 6
+  },
+  "theme": "dungeon",
+  "themes": {
+    "dungeon": {
+      "panel_bg": [14, 14, 20],
+      "stone": [68, 62, 78],
+      "floor_bg": [16, 14, 18]
+    },
+    "ember": {
+      "panel_bg": [22, 14, 10],
+      "stone": [90, 60, 40],
+      "floor_bg": [20, 12, 8]
+    },
+    "frost": {
+      "panel_bg": [10, 14, 24],
+      "stone": [50, 60, 95],
+      "floor_bg": [10, 14, 22]
+    }
   },
   "starting_weapons": {
     "swordsman": {
