@@ -36,7 +36,8 @@ _DEFAULTS = {
     },
     "movement": {"move_cooldown": 150, "skill_cooldown": 300, "monster_tick": 180},
     "inventory": {"size": 20, "cols": 6, "rows": 5},
-    "skills": {"keys": ["z", "x", "c", "v", "b"], "num_slots": 5},
+    "skills": {"keys": ["z", "x", "c", "v", "b", "n"], "num_slots": 5,
+                "basic_attack_key": "z", "active_skill_keys": ["x", "c", "v", "b", "n"]},
     "rarity": {
         "order": ["common", "uncommon", "rare", "epic", "mythic", "legendary", "unique"],
         "weights": {"common": 30, "uncommon": 25, "rare": 22, "epic": 14,
@@ -125,7 +126,14 @@ _DEFAULTS = {
         "ally_focus_range": 3, "ally_leash_range": 10, "ally_follow_distance": 2,
     },
     "fov": {"radius": 10, "ray_count": 720, "min_brightness": 0.05},
-    "chest_loot": {"min_items": 1, "max_items": 3, "gold_min": 12, "gold_max": 55, "gold_floor_divisor": 3},
+    "chest_loot": {
+        "min_items": 1, "max_items": 3, "gold_min": 12, "gold_max": 55,
+        "gold_floor_divisor": 3,
+        "type_weights": {"normal": 65, "rare": 18, "trapped": 12, "mimic": 5},
+        "rare_min_rarity": "rare", "rare_extra_items": 1,
+        "trap_disarm_chance": 0.65, "trap_damage_min": 8, "trap_damage_max": 20,
+        "mimic_type": "pack_hunter"
+    },
     "unique_items": {"drop_chance": 0.005},
     "consumable_value": {"base": 15, "floor_mult": 3},
     "class_weapon_affinity": 0.65,
@@ -341,6 +349,13 @@ CHEST_MIN_ITEMS = _deep_get(_cfg, "chest_loot", "min_items", default=_DEFAULTS["
 CHEST_MAX_ITEMS = _deep_get(_cfg, "chest_loot", "max_items", default=_DEFAULTS["chest_loot"]["max_items"])
 CHEST_GOLD_MIN  = _deep_get(_cfg, "chest_loot", "gold_min",  default=_DEFAULTS["chest_loot"]["gold_min"])
 CHEST_GOLD_MAX  = _deep_get(_cfg, "chest_loot", "gold_max",  default=_DEFAULTS["chest_loot"]["gold_max"])
+CHEST_TYPE_WEIGHTS = _deep_get(_cfg, "chest_loot", "type_weights", default=_DEFAULTS["chest_loot"]["type_weights"])
+CHEST_RARE_MIN_RARITY = _deep_get(_cfg, "chest_loot", "rare_min_rarity", default=_DEFAULTS["chest_loot"]["rare_min_rarity"])
+CHEST_RARE_EXTRA_ITEMS = _deep_get(_cfg, "chest_loot", "rare_extra_items", default=_DEFAULTS["chest_loot"]["rare_extra_items"])
+CHEST_TRAP_DISARM_CHANCE = _deep_get(_cfg, "chest_loot", "trap_disarm_chance", default=_DEFAULTS["chest_loot"]["trap_disarm_chance"])
+CHEST_TRAP_DAMAGE_MIN = _deep_get(_cfg, "chest_loot", "trap_damage_min", default=_DEFAULTS["chest_loot"]["trap_damage_min"])
+CHEST_TRAP_DAMAGE_MAX = _deep_get(_cfg, "chest_loot", "trap_damage_max", default=_DEFAULTS["chest_loot"]["trap_damage_max"])
+CHEST_MIMIC_TYPE = _deep_get(_cfg, "chest_loot", "mimic_type", default=_DEFAULTS["chest_loot"]["mimic_type"])
 
 # --- Monster gold ---
 MONSTER_GOLD_MIN       = _deep_get(_cfg, "combat", "monster_gold_min",       default=_DEFAULTS["combat"]["monster_gold_min"])

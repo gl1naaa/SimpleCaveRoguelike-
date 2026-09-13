@@ -557,7 +557,8 @@ def show_controls():
         controls = [
             ("WASD / Arrows", "Move through the dungeon"),
             ("SPACE",         "Interact, open chests, descend and buy"),
-            ("Z X C V B",     "Use skills (5 slots)"),
+            ("Z",              "Basic attack (combat classes)"),
+            ("X C V B N",      "Use active skills (5 slots)"),
             ("E",             "Open inventory"),
             ("DEL",           "Delete item from inventory"),
             ("TAB",           "Inspect nearby tiles and enemies"),
@@ -571,11 +572,11 @@ def show_controls():
             body.append(fg(255, 215, 0) + f'    {key:<20s}' + rst() + fg(180, 180, 200) + desc + rst())
             body.append('')
         body.append('')
-        body.append(fg(120, 120, 150) + '    Combat: walk into enemies to attack' + rst())
+        body.append(fg(120, 120, 150) + '    Combat: press Z to basic attack, or move into enemies' + rst())
         body.append(fg(120, 120, 150) + '    Find stairs (>) to go deeper' + rst())
         body.append(fg(120, 120, 150) + '    Open chests (=) for loot' + rst())
         body.append(fg(100, 220, 180) + '    City tip: visit the tavern ($) to hire or dismiss allies' + rst())
-        body.append(fg(100, 220, 180) + '    Healers only support; damage classes attack by moving into range' + rst())
+        body.append(fg(100, 220, 180) + '    Healers use Z-B for support; combat classes use Z for basic attack and X-N for skills' + rst())
 
         buf = _draw_frame('CONTROLS', 'Master the dungeon', body,
                           footer='Space or ESC: go back')
@@ -695,6 +696,53 @@ def show_death(floor: int, turns: int, killed: int, player_name: str, class_name
 # ============================================================
 #  Level Up Notification
 # ============================================================
+
+def show_floor_summary(floor: int, stats=None):
+    """Show a pause screen with the results of the completed floor."""
+    inp = InputState()
+    stats = stats or {}
+    time.sleep(0.25)
+
+    elapsed = max(0.0, float(stats.get("elapsed_seconds", 0.0)))
+    minutes, seconds = divmod(int(elapsed), 60)
+    hours, minutes = divmod(minutes, 60)
+    elapsed_text = f"{hours}h {minutes:02d}m {seconds:02d}s" if hours else f"{minutes}m {seconds:02d}s"
+    loot_events = stats.get("ally_loot", [])
+    grouped = {}
+    for event in loot_events:
+        grouped.setdefault(event.get("recipient", "Ally"), []).append(event.get("item", "Item"))
+
+    while True:
+        keys = inp.read()
+        if "quit" in keys or "action" in keys:
+            return
+
+        body = ["", fg(100, 230, 170) + "  FLOOR CLEARED" + rst(), ""]
+        summary = [
+            ("Floor:", str(floor), "220,190,80"),
+            ("Time:", elapsed_text, "220,190,80"),
+            ("Kills:", str(stats.get("kills", 0)), "220,190,80"),
+            ("Turns:", str(stats.get("turns", 0)), "180,210,255"),
+            ("Gold secured:", str(stats.get("gold", 0)), "255,215,80"),
+        ]
+        for label, value, color in summary:
+            r, g, b = (int(part) for part in color.split(","))
+            body.append(f"    {fg(160,160,180)}{label:<15}{rst()}{fg(r,g,b)}{value}{rst()}")
+
+        body.append("")
+        body.append(f"    {fg(160,160,180)}Loot assigned to allies:{rst()}")
+        if grouped:
+            for recipient, items in grouped.items():
+                body.append(f"      {fg(100,220,180)}{recipient}:{rst()} {', '.join(items)[:52]}")
+        else:
+            body.append(f"      {fg(120,120,150)}No items were assigned to allies.{rst()}")
+
+        body.extend(["", fg(120,120,150) + "The party is ready for the next floor." + rst()])
+        buf = _draw_frame("FLOOR SUMMARY", f"Results of floor {floor}", body,
+                          footer="SPACE: continue to city")
+        sys.stdout.write("\n".join(buf))
+        sys.stdout.flush()
+        time.sleep(0.03)
 
 def show_level_up(level: int):
     """Flash level up message."""

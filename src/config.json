@@ -74,9 +74,12 @@
       "x",
       "c",
       "v",
-      "b"
+      "b",
+      "n"
     ],
-    "num_slots": 5
+    "num_slots": 5,
+    "basic_attack_key": "z",
+    "active_skill_keys": ["x", "c", "v", "b", "n"]
   },
   "rarity": {
     "order": [
@@ -388,7 +391,19 @@
     "max_items": 3,
     "gold_min": 12,
     "gold_max": 55,
-    "gold_floor_divisor": 3
+    "gold_floor_divisor": 3,
+    "type_weights": {
+      "normal": 65,
+      "rare": 18,
+      "trapped": 12,
+      "mimic": 5
+    },
+    "rare_min_rarity": "rare",
+    "rare_extra_items": 1,
+    "trap_disarm_chance": 0.65,
+    "trap_damage_min": 8,
+    "trap_damage_max": 20,
+    "mimic_type": "pack_hunter"
   },
   "unique_items": {
     "drop_chance": 0.005

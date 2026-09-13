@@ -8,15 +8,21 @@ from ui import (fg, bg, rst, bold, dim, BLK, SH1, SH2, SH3, DIAM, HEART, DSTAR, 
 from input import InputState, wait_for_any_key
 from fov import FOV
 from map_generator import generate_dungeon, Room
-from entities import Player, Monster, Boss, Ally, NPCAlly, Chest, MONSTER_TYPES, BOSS_TYPES, NPCEnemy, has_line_of_sight
+from entities import (Player, Monster, Boss, Ally, NPCAlly, Chest, MONSTER_TYPES,
+                      BOSS_TYPES, NPCEnemy, ATTACKING_CLASSES, has_line_of_sight)
 from combat import CombatSystem, DamagePopup, StatusEffect, Projectile
 from npc_ai import npc_decide_and_act
 from ally_ai import npc_ally_decide_and_act, _most_wounded
 from pathfinding import flee_path
 from inventory import Inventory, handle_inventory_input
 from items import Item, generate_random_item
-from menu import show_title, show_class_select, show_controls, show_death, show_level_up, show_victory
+from menu import (show_title, show_class_select, show_controls, show_death,
+                  show_floor_summary, show_level_up, show_victory)
 from map_generator import generate_city
+
+# Terminal rendering is intentionally capped: beyond 60 FPS most terminals
+# cannot repaint reliably and only produce flicker/extra CPU usage.
+REALTIME_FPS = max(30, min(60, int(FPS)))
 try:
     from meta import MetaProgression, apply_meta_bonuses, open_meta_shop
     _META_AVAILABLE = True
@@ -34,7 +40,7 @@ try:
 except ImportError:
     _ENV_EFFECTS_AVAILABLE = False
 try:
-    from fx import FXSystem, water_char, render_particle
+    from fx import FXSystem, water_char, torch_char, render_particle
     _FX_AVAILABLE = True
 except ImportError:
     _FX_AVAILABLE = False
@@ -224,6 +230,28 @@ def _vis_len(s):
     return length
 
 
+def _clip_ansi(s, width):
+    """Clip an ANSI-colored line by visible width without breaking escapes."""
+    if width <= 0:
+        return ""
+    out = []
+    visible = 0
+    i = 0
+    while i < len(s) and visible < width:
+        if s[i] == "\x1b":
+            start = i
+            while i < len(s) and s[i] != "m":
+                i += 1
+            if i < len(s):
+                i += 1
+            out.append(s[start:i])
+        else:
+            out.append(s[i])
+            visible += 1
+            i += 1
+    return "".join(out) + rst()
+
+
 def _clamp_color(v):
     return max(0, min(255, int(v)))
 
@@ -289,6 +317,8 @@ def _tile_glyph(tile, x, y, gm, game_time):
     if tile == "#":
         return gm.wall_char(x, y)
     if tile == ".":
+        if _FX_AVAILABLE and (x * 11 + y * 7) % 31 == 0:
+            return torch_char(game_time, fancy=True)
         variants = [DOT, ".", ",", chr(183)]
         return variants[(x * 3 + y * 5) % len(variants)]
     if tile == STAIRS_DOWN:
@@ -345,7 +375,10 @@ def _inspect_lines(gm, player, monsters, bosses, chests, allies, npc_enemies, co
                 lines.append(" " + ",".join(active)[:22])
     elif chest:
         state = "opened" if chest.opened else "sealed"
-        lines += [f" Chest: {state}", f" Gold: {getattr(chest, 'gold', 0)}"]
+        chest_type = _chest_label(chest) if chest.opened or getattr(chest, "chest_type", "normal") == "normal" else "suspicious"
+        lines += [f" Chest: {chest_type} ({state})",
+                  f" Gold: {getattr(chest, 'gold', 0)}",
+                  f" Items: {len(getattr(chest, 'items', []))}"]
     else:
         names = {
             "#": "Stone wall", ".": "Cave floor", STAIRS_DOWN: "Down stairs",
@@ -368,8 +401,11 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
     except Exception:
         term_w, term_h = 120, 40
 
-    PANEL_W = 24
-    MAP_W = max(40, term_w - 2 * PANEL_W)
+    # Keep the side panels readable while giving the map more space on
+    # smaller terminals. The previous fixed 24+24 columns left too little
+    # room for the actual game field.
+    PANEL_W = 18 if term_w < 100 else 22 if term_w < 130 else 24
+    MAP_W = max(1, term_w - 2 * PANEL_W)
     MAP_H = max(10, term_h - 10)
     PBG = bg(THEME_PANEL_BG[0], THEME_PANEL_BG[1], THEME_PANEL_BG[2])
     theme = _floor_theme(floor_num)
@@ -399,12 +435,14 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
     # Title bar
     buf.append(
         bg(18, 18, 28) + fg(120, 170, 210) + ' ' + DIAM + ' '
-        + fg(200, 200, 210) + bold() + 'SIMPLE CAVE ROGUELIKE' + rst()
+        + fg(200, 200, 210) + bold() + 'SIMPLE CAVE ROGUELIKE v2.1.1' + rst()
         + bg(18, 18, 28)
         + f'  {fg(220, 190, 80)}Floor {floor_num}{rst()}'
         + f'  {fg(*accent)}{theme["name"]}{rst()}'
         + f'  {fg(140, 140, 160)}Lv.{player.level}{rst()}'
         + f'  {fg(180, 180, 200)}{player.name}{rst()}'
+        + f'  {fg(80, 220, 140)}● LIVE{rst()}'
+        + f'  {fg(120, 150, 180)}T+{int(game_time // 60):02d}:{int(game_time % 60):02d}{rst()}'
         + ' ' * 30 + rst()
     )
     # HP bar
@@ -457,7 +495,7 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
     if active_effects:
         buf.append(bg(18, 18, 28) + fg(210, 180, 255) + ' EFFECTS: ' +
                    '  '.join(e.upper() for e in active_effects[:5]) + rst())
-    buf.append(bg(18, 18, 28) + SH2 * 80 + rst())
+    buf.append(bg(18, 18, 28) + SH2 * term_w + rst())
 
     # ===== FIND NEAREST ENEMY =====
     nearest_enemy = None
@@ -477,6 +515,7 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
 
     # ===== HELPER: PANEL LINE =====
     def _pnl(text, fg_c=None):
+        text = text[:PANEL_W]
         if fg_c:
             return PBG + fg_c + text.ljust(PANEL_W) + rst()
         return PBG + text.ljust(PANEL_W) + rst()
@@ -560,6 +599,28 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
 
     # ===== RIGHT PANEL (Action Log) =====
     right = []
+    if term_w >= 100:
+        mini_w = min(PANEL_W - 2, 22)
+        mini_h = 7
+        right.append(_pnl(' MINI-MAP', fg(*accent) + bold()))
+        for my in range(mini_h):
+            row = ''
+            for mx in range(mini_w):
+                wx = min(gm.w - 1, int(mx * gm.w / mini_w))
+                wy = min(gm.h - 1, int(my * gm.h / mini_h))
+                glyph = ' '
+                if (wx, wy) == (player.x, player.y):
+                    glyph = '@'
+                elif any(a.alive and (a.x, a.y) == (wx, wy) for a in allies):
+                    glyph = '+'
+                elif any(e.alive and (e.x, e.y) == (wx, wy)
+                         for e in list(monsters) + list(bosses) + list(npc_enemies or [])):
+                    glyph = '!'
+                elif (wx, wy) in fov.explored:
+                    glyph = '#' if gm.tile(wx, wy) == '#' else '.'
+                row += glyph
+            right.append(_pnl(' ' + row, fg(100, 150, 180)))
+        right.append(_pnl(' ' + chr(9472) * min(13, PANEL_W - 2), fg(70, 70, 90)))
     if inspect_pos is not None:
         for info in _inspect_lines(gm, player, monsters, bosses, chests, allies, npc_enemies, combat_sys, inspect_pos):
             color = fg(*accent) + bold() if info.strip() == "Inspect" else fg(170, 175, 190)
@@ -724,9 +785,7 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
                     if chest.opened:
                         line += fg(int(100 * b), int(100 * b), int(100 * b)) + 'x' + rst()
                     else:
-                        line += bg(int(40 * b), int(35 * b), int(10 * b))
-                        line += fg(int(255 * b), int(215 * b), int(0 * b))
-                        line += bold() + '=' + rst()
+                        line += chest.draw(brightness=b)
                 elif t == '#':
                     wch = gm.wall_char(x, y)
                     # Base stone — cold dungeon granite with slight purple undertone
@@ -900,14 +959,17 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
         buf.append(left[i] + map_lines[i] + rst() + right[i])
 
     # ===== BOTTOM PANEL =====
-    buf.append(bg(18, 18, 28) + SH2 * 80 + rst())
+    buf.append(bg(18, 18, 28) + SH2 * term_w + rst())
 
     # Skill bar
     skill_line = bg(18, 18, 28) + ' '
-    skill_keys = ['Z', 'X', 'C', 'V', 'B']
+    skill_keys = ['Z', 'X', 'C', 'V', 'B', 'N']
     now = time.time()
-    for i, sk in enumerate(player.skills[:5]):
-        if sk is None:
+    visible_skill_count = 6 if player.class_name in ATTACKING_CLASSES else 5
+    for i, sk in enumerate(player.skills[:visible_skill_count]):
+        if player.class_name in ATTACKING_CLASSES and i == 0:
+            skill_line += fg(80, 200, 80) + f' Z:Basic '
+        elif sk is None:
             skill_line += fg(60, 60, 80) + f' {skill_keys[i]}:[empty] '
         elif sk.ready(now):
             skill_line += fg(80, 200, 80) + f' {skill_keys[i]}:{sk.name[:6]} '
@@ -920,7 +982,9 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
     # Status bar
     enemies = sum(1 for m in monsters if m.alive) + sum(1 for b in bosses if b.alive)
     on_stairs = gm.tile(player.x, player.y) == STAIRS_DOWN
-    on_chest = any(c.x == player.x and c.y == player.y and not c.opened for c in chests)
+    on_chest = any(c.x == player.x and c.y == player.y and
+                   (not c.opened or (c.items and (c.chest_type != "mimic" or c.mimic_defeated)))
+                   for c in chests)
     on_event = gm.tile(player.x, player.y) == ALTAR
     on_trap = gm.tile(player.x, player.y) == '^'
 
@@ -942,7 +1006,7 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
         + fg(70, 70, 90) + '|'
         + action_hint
         + fg(70, 70, 90) + '|'
-        + fg(160, 160, 180) + ' E:inventory  Del:drop  TAB:inspect  Z-B:skills '
+        + fg(160, 160, 180) + ' E:inventory  Del:drop  TAB:inspect  Z:basic  X-N:skills '
         + ' ' * 30 + rst()
     )
     buf.append('')
@@ -950,6 +1014,7 @@ def render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log, co
     # Pad all lines to terminal width to prevent ghosting
     padded = []
     for line in buf:
+        line = _clip_ansi(line, term_w)
         vl = _vis_len(line)
         padding = max(0, term_w - vl)
         padded.append(line + rst() + ' ' * padding)
@@ -1016,13 +1081,15 @@ def render_city(gm, player, shop_items, floor_num, log, shop_cursor,
         + BLK * mp_filled + SH1 * (bar_w - mp_filled)
         + rst() + ' ' * 20
     )
-    buf.append(bg(18, 18, 28) + SH2 * 80 + rst())
+    buf.append(bg(18, 18, 28) + SH2 * term_w + rst())
 
     # Map
     overlay_lines = 0
     if show_shop:
         overlay_lines = 12  # title + borders + items + help
-    MAP_W = max(40, term_w - 40)
+    # City has one right-side panel; let the map use every remaining column.
+    PANEL_W = 18 if term_w < 100 else 22 if term_w < 130 else 24
+    MAP_W = max(1, term_w - PANEL_W)
     MAP_H = max(10, term_h - 10 - overlay_lines)
     vw, vh = MAP_W, MAP_H
     sx = max(0, player.x - vw // 2)
@@ -1063,11 +1130,16 @@ def render_city(gm, player, shop_items, floor_num, log, shop_cursor,
         map_lines.append(PBG + ' ' * MAP_W + rst())
 
     # Side panel (player + log)
-    PANEL_W = 24
+    def city_panel(text, fg_c=None):
+        text = text[:PANEL_W]
+        if fg_c:
+            return PBG + fg_c + text.ljust(PANEL_W) + rst()
+        return PBG + text.ljust(PANEL_W) + rst()
+
     right = []
-    right.append(_pnl(f' {player.name} [{player.class_name}]', fg(80, 220, 255)))
+    right.append(city_panel(f' {player.name} [{player.class_name}]', fg(80, 220, 255)))
     while len(right) < MAP_H:
-        right.append(_pnl(''))
+        right.append(city_panel(''))
 
     # Combine
     max_lines = max(len(map_lines), len(right))
@@ -1077,7 +1149,7 @@ def render_city(gm, player, shop_items, floor_num, log, shop_cursor,
         buf.append(map_lines[i] + rst() + right[i])
 
     # Bottom
-    buf.append(bg(18, 18, 28) + SH2 * 80 + rst())
+    buf.append(bg(18, 18, 28) + SH2 * term_w + rst())
     buf.append(
         bg(18, 18, 28)
         + fg(220, 200, 80) + f' $:Shop  *:Heal  >:Descend '
@@ -1125,6 +1197,7 @@ def render_city(gm, player, shop_items, floor_num, log, shop_cursor,
     # Pad
     padded = []
     for line in buf:
+        line = _clip_ansi(line, term_w)
         vl = _vis_len(line)
         padding = max(0, term_w - vl)
         padded.append(line + rst() + ' ' * padding)
@@ -1186,10 +1259,13 @@ def render_inventory(player, inv_cur, inv_col):
             eq_lines.append(f"  {fg(100,100,120)}{label:9s}{rst()} {fg(50,50,70)}[---]{rst()}")
     eq_lines.append("")
     eq_lines.append(f"  {bold()}{fg(0, 200, 200)}Skills{rst()}")
-    skl_keys = ["Z", "X", "C", "V", "B"]
-    for si in range(5):
+    skl_keys = ["Z", "X", "C", "V", "B", "N"]
+    visible_slots = range(6) if player.class_name in ATTACKING_CLASSES else range(5)
+    for si in visible_slots:
         sk = player.skills[si] if si < len(player.skills) else None
-        if sk:
+        if player.class_name in ATTACKING_CLASSES and si == 0:
+            eq_lines.append(f"  {fg(100,100,120)}Z{rst()}     {fg(0,200,0)}{'Basic Attack':<16s}{rst()}")
+        elif sk:
             eq_lines.append(f"  {fg(100,100,120)}{skl_keys[si]}{rst()}     {fg(0,200,0)}{sk.name[:16]:<16s}{rst()}")
         else:
             eq_lines.append(f"  {fg(100,100,120)}{skl_keys[si]}{rst()}     {fg(50,50,70)}---{rst()}")
@@ -1284,9 +1360,163 @@ def render_inventory(player, inv_cur, inv_col):
     sys.stdout.flush()
 
 
+def _nearest_target_for_basic_attack(player, monsters, bosses, npc_enemies, attack_range):
+    targets = [e for e in list(monsters) + list(bosses) + list(npc_enemies or []) if e.alive]
+    in_range = [e for e in targets if math.sqrt((e.x - player.x) ** 2 + (e.y - player.y) ** 2) <= attack_range]
+    return min(in_range, key=lambda e: math.sqrt((e.x - player.x) ** 2 + (e.y - player.y) ** 2), default=None)
+
+
 # ============================================================
 #  Main Game Loop
 # ============================================================
+def _chest_label(chest):
+    return {
+        "normal": "NORMAL CHEST",
+        "rare": "RARE CHEST",
+        "trapped": "TRAPPED CHEST",
+        "mimic": "MIMIC CHEST",
+    }.get(getattr(chest, "chest_type", "normal"), "CHEST")
+
+
+def _render_chest_inventory(chest, player, recipients, item_index, recipient_index, floor_num):
+    """Render chest loot as an inventory-style two-pane terminal overlay."""
+    recipient = recipients[recipient_index]
+    selected = chest.items[item_index] if chest.items and 0 <= item_index < len(chest.items) else None
+    if recipient is player:
+        carried = [item for item in player.inventory.slots if item is not None]
+        capacity = f"{len(carried)}/{player.inventory.max_slots} slots"
+    else:
+        carried = list(getattr(recipient, "loot_bag", []))
+        capacity = f"{len(carried)} items"
+
+    buf = ["\x1b[2J\x1b[H", ""]
+    buf.append(f"  {bold()}{fg(255,215,0)}CHEST LOOT{rst()}  {fg(100,100,120)}- SPACE: take | ESC: close{rst()}")
+    buf.append(f"  {fg(160,160,180)}{_chest_label(chest)}  |  Floor {floor_num}{rst()}")
+    buf.append(f"  {fg(255,215,80)}Gold: {chest.gold}{rst()}    {fg(120,120,150)}UP/DOWN: select loot  LEFT/RIGHT or TAB: recipient{rst()}")
+    buf.append("")
+
+    left_w = 48
+    right_w = 43
+    top = f"  {bold()}{fg(0,200,200)}Chest ({len(chest.items)}){rst()}" + " " * (left_w - 13)
+    top += f"{bold()}{fg(0,200,200)}Recipient: {recipient.name}{rst()}"
+    buf.append(top)
+    buf.append(f"  {fg(60,60,80)}{BOX_TL}{BOX_H*(left_w-2)}{BOX_TR}{rst()}" + " " * 2 +
+               f"{fg(60,60,80)}{BOX_TL}{BOX_H*(right_w-2)}{BOX_TR}{rst()}")
+    rows = max(8, len(chest.items), len(carried))
+    for row in range(rows):
+        if row < len(chest.items):
+            item = chest.items[row]
+            marker = "▶ " if row == item_index else "  "
+            left_text = marker + item.short_text()
+            highlight = bg(50, 50, 70) if row == item_index else ""
+            left = highlight + rarity_color(item.rarity) + left_text[:left_w-4].ljust(left_w-4) + rst()
+        else:
+            left = fg(50,50,70) + " " * (left_w-2) + rst()
+        if row < len(carried):
+            item = carried[row]
+            right = rarity_color(item.rarity) + ("  " + item.name)[:right_w-4].ljust(right_w-4) + rst()
+        else:
+            right = fg(50,50,70) + " " * (right_w-2) + rst()
+        buf.append(f"  {fg(60,60,80)}{BOX_V}{rst()}{left}{fg(60,60,80)}{BOX_V}{rst()}  "
+                   f"{fg(60,60,80)}{BOX_V}{rst()}{right}{fg(60,60,80)}{BOX_V}{rst()}")
+    buf.append(f"  {fg(60,60,80)}{BOX_BL}{BOX_H*(left_w-2)}{BOX_BR}{rst()}" + " " * 2 +
+               f"{fg(60,60,80)}{BOX_BL}{BOX_H*(right_w-2)}{BOX_BR}{rst()}")
+    buf.append("")
+    buf.append(f"  {bold()}{fg(200,200,220)}Selected loot{rst()}    {fg(160,160,180)}{recipient.name}: {capacity}{rst()}")
+    if selected:
+        buf.append(f"  {rarity_color(selected.rarity)}{bold()}{selected.name}{rst()}  {fg(160,160,180)}[{selected.rarity}]{rst()}")
+        stat_text = selected.stat_text()
+        if stat_text != "---":
+            buf.append(f"  {fg(220,200,100)}{stat_text[:left_w + right_w]}{rst()}")
+        description = getattr(selected, "description", "") or ""
+        if description:
+            buf.append(f"  {fg(160,160,180)}{description[:left_w + right_w]}{rst()}")
+        buf.append(f"  {fg(80,220,120)}SPACE: give to {recipient.name}{rst()}")
+    else:
+        buf.append(f"  {fg(120,120,150)}The chest is empty. Gold is secured automatically.{rst()}")
+    buf.append("")
+    buf.append(f"  {dim()}The selected item is highlighted in the chest panel. Items rejected by an ally stay available for another recipient.{rst()}")
+    sys.stdout.write("\n".join(buf))
+    sys.stdout.flush()
+
+
+def _chest_loot_prompt(chest, player, allies, inp, log, floor_num, combat, ally_loot=None):
+    """Let the player distribute chest contents using terminal controls."""
+    recipients = [player] + [a for a in allies if getattr(a, "is_hired", False) and a.alive]
+    item_index = 0
+    recipient_index = 0
+    while chest.items:
+        keys = inp.read()
+        if "quit" in keys:
+            break
+        if "up" in keys:
+            item_index = (item_index - 1) % len(chest.items)
+        elif "down" in keys:
+            item_index = (item_index + 1) % len(chest.items)
+        elif "tab" in keys or "left" in keys or "right" in keys:
+            recipient_index = (recipient_index + 1) % len(recipients)
+        elif "action" in keys:
+            item = chest.items[item_index]
+            recipient = recipients[recipient_index]
+            accepted = False
+            if recipient is player:
+                accepted = player.inventory.add_item(item)
+            elif hasattr(recipient, "receive_loot"):
+                accepted = recipient.receive_loot(item)
+            if accepted:
+                chest.items.pop(item_index)
+                item_index = min(item_index, max(0, len(chest.items) - 1))
+                if recipient is not player and ally_loot is not None:
+                    ally_loot.append({"recipient": recipient.name, "item": item.name})
+                log.append(f"{recipient.name} receives {item.name} [{item.rarity}].")
+            else:
+                log.append(f"{recipient.name} cannot carry {item.name}.")
+
+        _render_chest_inventory(chest, player, recipients, item_index, recipient_index, floor_num)
+        time.sleep(0.03)
+
+    if chest.items:
+        log.append(f"{len(chest.items)} item(s) remain in the chest.")
+    else:
+        player.inventory.gold += chest.gold
+        chest.gold = 0
+        log.append(f"Party secured the chest contents.")
+
+
+def _open_chest(chest, player, allies, inp, log, floor_num, combat, ally_loot=None):
+    """Resolve a chest interaction. Returns 'mimic' or 'opened'."""
+    chest_type = getattr(chest, "chest_type", "normal")
+    if chest_type == "mimic" and not chest.mimic_triggered:
+        chest.open()
+        chest.mimic_triggered = True
+        log.append("The chest was a MIMIC! Defeat it to claim the loot.")
+        return "mimic"
+    if chest_type == "trapped" and not chest.trap_triggered:
+        while True:
+            keys = inp.read()
+            if "quit" in keys:
+                return "cancelled"
+            if "action" in keys:
+                from config import CHEST_TRAP_DISARM_CHANCE, CHEST_TRAP_DAMAGE_MIN, CHEST_TRAP_DAMAGE_MAX
+                chest.trap_triggered = True
+                if random.random() > CHEST_TRAP_DISARM_CHANCE:
+                    damage = random.randint(CHEST_TRAP_DAMAGE_MIN, CHEST_TRAP_DAMAGE_MAX) + floor_num
+                    actual = player.take_damage(damage)
+                    log.append(f"Chest trap triggered! You lose {actual} HP.")
+                else:
+                    log.append("You disarm the chest trap.")
+                break
+            clear_screen()
+            print("TRAPPED CHEST")
+            print("=" * 48)
+            print("A dangerous mechanism is hidden inside.")
+            print("SPACE: attempt to disarm/open    ESC: leave")
+            time.sleep(0.03)
+    chest.open()
+    _chest_loot_prompt(chest, player, allies, inp, log, floor_num, combat, ally_loot)
+    return "opened"
+
+
 def run_game(class_name: str, player_name: str):
     hide_cursor()
     sys.stdout.write("\x1b[2J\x1b[H")
@@ -1350,6 +1580,11 @@ def run_game(class_name: str, player_name: str):
     inv_cursor = 0
     inv_col = 0
     game_time = 0.0
+    floor_started_at = game_time
+    floor_ally_loot = []
+    floor_kills_start = player.monsters_killed
+    floor_turns_start = player.turns
+    floor_gold_start = player.inventory.gold
     action_cooldown = 0.0
     mp_regen_acc = 0.0
     hp_regen_acc = 0.0
@@ -1407,7 +1642,15 @@ def run_game(class_name: str, player_name: str):
 
     def exit_city():
         nonlocal in_city, floor_num, gm, monsters, bosses, chests, npc_enemies, fov
-        nonlocal allies, boss_killed, victory_flag
+        nonlocal allies, boss_killed, victory_flag, floor_started_at, floor_ally_loot, floor_kills_start, floor_turns_start, floor_gold_start
+        # The caller has already distributed all unclaimed chest loot.
+        show_floor_summary(floor_num, {
+            "elapsed_seconds": game_time - floor_started_at,
+            "kills": player.monsters_killed - floor_kills_start,
+            "turns": player.turns - floor_turns_start,
+            "gold": player.inventory.gold - floor_gold_start,
+            "ally_loot": list(floor_ally_loot),
+        })
         in_city = False
         floor_num += 1
         if floor_num > 10:
@@ -1429,6 +1672,11 @@ def run_game(class_name: str, player_name: str):
                     break
         boss_killed = False
         already_rewarded_boss_ids.clear()
+        floor_started_at = game_time
+        floor_ally_loot = []
+        floor_kills_start = player.monsters_killed
+        floor_turns_start = player.turns
+        floor_gold_start = player.inventory.gold
         log.append(f"Descended to floor {floor_num}!")
 
     def distribute_unclaimed_chests():
@@ -1439,25 +1687,32 @@ def run_game(class_name: str, player_name: str):
         cursor = 0
         claimed = 0
         for chest in chests:
-            if chest.opened:
+            if not chest.items or (chest.chest_type == "mimic" and not chest.mimic_defeated):
                 continue
-            chest.open()
+            if not chest.opened:
+                chest.open()
             for item in chest.items:
                 recipient = recipients[cursor % len(recipients)]
                 if recipient.receive_loot(item):
+                    floor_ally_loot.append({"recipient": recipient.name, "item": item.name})
                     log.append(f"{recipient.name} claims {item.name} from an abandoned chest.")
                     cursor += 1
                 elif player.inventory.add_item(item):
                     log.append(f"You recover {item.name} from an abandoned chest.")
             player.inventory.gold += chest.gold
+            chest.items.clear()
+            chest.gold = 0
             claimed += 1
         if claimed:
             log.append(f"Party secured loot from {claimed} unopened chest(s).")
 
     try:
         while player.alive:
+            frame_started = time.perf_counter()
             now = time.time()
-            dt = now - last_frame
+            # Keep simulation real-time while preventing a long pause/window
+            # resize from teleporting actors or consuming huge regen ticks.
+            dt = min(0.10, max(0.0, now - last_frame))
             last_frame = now
             game_time += dt
             if fx_system:
@@ -1622,7 +1877,8 @@ def run_game(class_name: str, player_name: str):
                 render_city(gm, player, city_shop_items, floor_num, log,
                             shop_cursor, show_shop, game_time, current_shop_name,
                             [a for a in allies if getattr(a, "is_hired", False) and a.alive])
-                time.sleep(0.03)
+                time.sleep(max(0.001, (1.0 / REALTIME_FPS) -
+                               (time.perf_counter() - frame_started)))
                 continue
 
             # === DUNGEON MODE ===
@@ -1673,7 +1929,8 @@ def run_game(class_name: str, player_name: str):
                 combat.update_popups()
                 render(gm, player, monsters, bosses, chests, allies, fov, floor_num, log,
                        combat, show_inv, False, game_time, npc_enemies, fx_system, inspect_pos)
-                time.sleep(0.03)
+                time.sleep(max(0.001, (1.0 / REALTIME_FPS) -
+                               (time.perf_counter() - frame_started)))
                 continue
 
             # ---- GAMEPLAY MODE ----
@@ -1689,6 +1946,52 @@ def run_game(class_name: str, player_name: str):
                 if ne.alive:
                     occupied.add((ne.x, ne.y))
 
+            # Manual basic attack. Movement no longer triggers an attack.
+            basic_action = False
+            if "skill0" in keys and player.class_name in ATTACKING_CLASSES and player.can_move(now):
+                attack_range = (4 if player.class_name == "archer" else
+                                3 if player.class_name == "mage" else
+                                2 if player.class_name == "summoner" else 1.5)
+                basic_target = _nearest_target_for_basic_attack(player, monsters, bosses, npc_enemies, attack_range)
+                if basic_target is None:
+                    log.append("No target in basic attack range.")
+                else:
+                    damage_mult = {
+                        "swordsman": 1.15,
+                        "archer": 0.85,
+                        "mage": 0.80,
+                        "summoner": 0.80,
+                        "rogue": 0.95,
+                    }.get(player.class_name, 1.0)
+                    result = combat.player_basic_attack(player, basic_target, now, damage_mult)
+                    if result is not None:
+                        basic_action = True
+                        player.move_cooldown = now
+                        player.turns += 1
+                        dmg, crit = result
+                        if dmg > 0 and tracker:
+                            try:
+                                tracker.log_damage(dmg)
+                            except Exception:
+                                pass
+                        log.append(f"Basic attack hits {basic_target.name} for {dmg}!" if dmg > 0 else
+                                   f"Basic attack missed {basic_target.name}.")
+                        if not basic_target.alive:
+                            xp = combat.calculate_xp(basic_target)
+                            player.gain_xp(xp)
+                            player.monsters_killed += 1
+                            if isinstance(basic_target, Boss):
+                                if id(basic_target) not in already_rewarded_boss_ids:
+                                    already_rewarded_boss_ids.add(id(basic_target))
+                                    boss_killed = True
+                                    gold_drop = BOSS_GOLD_BASE + floor_num * BOSS_GOLD_FLOOR_MULT
+                                    player.inventory.gold += gold_drop
+                                    log.append(f"KILLED {basic_target.name}! +{xp} XP, +{gold_drop}g!")
+                            else:
+                                gold_drop = random.randint(MONSTER_GOLD_MIN, MONSTER_GOLD_MAX_BASE + floor_num * MONSTER_GOLD_FLOOR_MULT)
+                                player.inventory.gold += gold_drop
+                                log.append(f"Killed {basic_target.name}! +{xp} XP, +{gold_drop}g!")
+
             # Movement
             dx, dy = 0, 0
             if inp.is_held("up"):    dy = -1
@@ -1700,7 +2003,7 @@ def run_game(class_name: str, player_name: str):
                 last_move_dx, last_move_dy = dx, dy
 
             moved = False
-            if (dx != 0 or dy != 0) and player.can_move(now):
+            if (dx != 0 or dy != 0) and player.can_move(now) and not basic_action:
                 nx, ny = player.x + dx, player.y + dy
 
                 # Find nearest enemy for auto-attack
@@ -1726,7 +2029,7 @@ def run_game(class_name: str, player_name: str):
                             nearest_dist = d
                             nearest_enemy = ne
 
-                if nearest_enemy and now > basic_atk_cd and player.class_name in ("swordsman", "archer", "rogue"):
+                if nearest_enemy and now > basic_atk_cd and player.class_name in ():
                     basic_atk_cd = now + (0.35 if player.class_name == "swordsman" else 0.45 if player.class_name == "rogue" else 0.5)
                     if player.class_name == "archer":
                         def _auto_on_hit(target, hx, hy):
@@ -1889,16 +2192,19 @@ def run_game(class_name: str, player_name: str):
                     distribute_unclaimed_chests()
                     enter_city()
                 # Chest
-                chest = next((c for c in chests if c.x == player.x and c.y == player.y and not c.opened), None)
+                chest = next((c for c in chests
+                              if c.x == player.x and c.y == player.y
+                              and (not c.opened or
+                                   (c.items and (c.chest_type != "mimic" or c.mimic_defeated)))), None)
                 if chest:
-                    chest.open()
-                    for item in chest.items:
-                        if player.inventory.add_item(item):
-                            log.append(f"Found: {item.name} [{item.rarity}]")
-                        else:
-                            log.append("Inventory full!")
-                    player.inventory.gold += chest.gold
-                    log.append(f"Found {chest.gold} gold!")
+                    chest_result = _open_chest(chest, player, allies, inp, log, floor_num, combat, floor_ally_loot)
+                    if chest_result == "mimic":
+                        from config import CHEST_MIMIC_TYPE
+                        mimic = Monster(chest.x, chest.y, CHEST_MIMIC_TYPE, floor_num)
+                        mimic.name = "Mimic " + mimic.name
+                        mimic.chest_ref = chest
+                        monsters.append(mimic)
+                        log.append("The mimic attacks!")
                 # Event
                 elif gm.tile(player.x, player.y) == "*":
                     events = [
@@ -1927,14 +2233,19 @@ def run_game(class_name: str, player_name: str):
                         log.append("Your allies gain +2 awareness for this floor.")
                     gm.tiles[player.y][player.x] = "."
 
-            # Skills (Z/X/C/V/B)
-            for i in range(5):
+            # Skills: Z is the basic attack for combat classes; X-N are active skills.
+            for i in range(6):
                 if f"skill{i}" in keys:
-                    ok, msg = player.use_skill(i, now)
+                    if player.class_name in ATTACKING_CLASSES and i == 0:
+                        continue
+                    # Attacking classes use Z for the mana-free basic attack;
+                    # X-N continue to address their five regular skill slots.
+                    skill_slot = i
+                    ok, msg = player.use_skill(skill_slot, now)
                     if not ok:
                         log.append(msg)
                         continue
-                    skill = player.skills[i]
+                    skill = player.skills[skill_slot]
                     if skill is None:
                         continue
                     log.append(f"Used {skill.name}!")
@@ -2442,18 +2753,23 @@ def run_game(class_name: str, player_name: str):
             # Loot goes into the ally's personal progression bag.
             if not any(e.alive for e in monsters + bosses + npc_enemies):
                 for ally in hired_allies:
-                    chest = next((c for c in chests if not c.opened and
+                    chest = next((c for c in chests if c.items and
+                                  (not c.opened or (c.chest_type != "mimic" or c.mimic_defeated)) and
                                   abs(c.x - ally.x) + abs(c.y - ally.y) <= 1), None)
                     if chest is None:
                         continue
                     chest.open()
                     for item in chest.items:
                         if ally.receive_loot(item):
+                            floor_ally_loot.append({"recipient": ally.name, "item": item.name})
                             log.append(f"{ally.name} loots {item.name}.")
                         elif player.inventory.add_item(item):
                             log.append(f"{ally.name} passes {item.name} to you.")
-                    player.inventory.gold += chest.gold
-                    log.append(f"{ally.name} opened a chest (+{chest.gold}g).")
+                    chest_gold = chest.gold
+                    player.inventory.gold += chest_gold
+                    chest.items.clear()
+                    chest.gold = 0
+                    log.append(f"{ally.name} opened a chest (+{chest_gold}g).")
 
             for m in monsters:
                 if not m.alive:
@@ -2659,6 +2975,10 @@ def run_game(class_name: str, player_name: str):
                 if defeated.alive or id(defeated) in loot_awarded_ids:
                     continue
                 loot_awarded_ids.add(id(defeated))
+                mimic_chest = getattr(defeated, "chest_ref", None)
+                if mimic_chest is not None:
+                    mimic_chest.mimic_defeated = True
+                    log.append("The mimic is defeated. Its chest loot is now safe.")
                 if random.random() < min(0.28, 0.08 + floor_num * 0.012):
                     dropped = generate_random_item(floor_num, player.class_name)
                     if player.inventory.add_item(dropped):
@@ -2851,7 +3171,8 @@ def run_game(class_name: str, player_name: str):
                    combat, show_inv, False, game_time, npc_enemies, fx_system,
                    inspect_pos if inspect_mode else None)
 
-            time.sleep(0.03)
+            frame_time = time.perf_counter() - frame_started
+            time.sleep(max(0.001, (1.0 / REALTIME_FPS) - frame_time))
 
     except KeyboardInterrupt:
         pass

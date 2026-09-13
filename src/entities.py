@@ -93,6 +93,8 @@ CLASS_BASE_HP = {
     "rogue":     11,
 }
 
+ATTACKING_CLASSES = {"swordsman", "archer", "mage", "summoner", "rogue"}
+
 
 class Player(Entity):
     def __init__(self, x: int, y: int, class_name: str = "swordsman"):
@@ -131,7 +133,8 @@ class Player(Entity):
         for slot in range(6):
             sk = get_skill_for_slot(class_name, slot)
             if sk:
-                self.skills[slot] = sk
+                target_slot = slot + 1 if class_name in ATTACKING_CLASSES else slot
+                self.skills[target_slot] = sk
                 self.learned_skills.append(sk.id)
 
         # Give starting weapon so skills work
@@ -267,8 +270,9 @@ class Player(Entity):
             return False
         skill = copy.deepcopy(skill)
         self.learned_skills.append(skill_id)
-        if skill.slot < len(self.skills):
-            self.skills[skill.slot] = skill
+        target_slot = skill.slot + 1 if self.class_name in ATTACKING_CLASSES else skill.slot
+        if target_slot < len(self.skills):
+            self.skills[target_slot] = skill
         else:
             self.skills.append(skill)
         return True
@@ -681,16 +685,37 @@ class Chest(Entity):
     def __init__(self, x: int, y: int):
         super().__init__(x, y, "=", "Chest", "255,215,0")
         self.opened = False
+        self.chest_type = "normal"
+        self.trap_triggered = False
+        self.mimic_triggered = False
+        self.mimic_defeated = False
         self.items: List[Item] = []
         self.gold = 0
 
-    def generate_loot(self, floor: int = 1, class_name: str = ""):
+    def generate_loot(self, floor: int = 1, class_name: str = "", chest_type: str = ""):
         from items import generate_random_item
-        count = random.randint(1, 3)
+        from config import (CHEST_MIN_ITEMS, CHEST_MAX_ITEMS, CHEST_GOLD_MIN,
+                            CHEST_GOLD_MAX, CHEST_TYPE_WEIGHTS,
+                            CHEST_RARE_MIN_RARITY, CHEST_RARE_EXTRA_ITEMS)
+        if not chest_type:
+            names = list(CHEST_TYPE_WEIGHTS.keys())
+            weights = [max(0, float(CHEST_TYPE_WEIGHTS[name])) for name in names]
+            chest_type = random.choices(names, weights=weights, k=1)[0] if sum(weights) > 0 else "normal"
+        self.chest_type = chest_type if chest_type in ("normal", "rare", "trapped", "mimic") else "normal"
+        count = random.randint(CHEST_MIN_ITEMS, CHEST_MAX_ITEMS)
+        if self.chest_type == "rare":
+            count += max(0, int(CHEST_RARE_EXTRA_ITEMS))
+        rarity_order = ["common", "uncommon", "rare", "epic", "mythic", "legendary", "unique"]
+        min_index = rarity_order.index(CHEST_RARE_MIN_RARITY) if CHEST_RARE_MIN_RARITY in rarity_order else 2
         for _ in range(count):
-            self.items.append(generate_random_item(floor, class_name))
-        from config import CHEST_GOLD_MIN, CHEST_GOLD_MAX
-        self.gold = random.randint(CHEST_GOLD_MIN, CHEST_GOLD_MAX)
+            item = generate_random_item(floor, class_name)
+            if self.chest_type == "rare" and not getattr(item, "is_unique", False):
+                for _retry in range(8):
+                    if rarity_order.index(item.rarity) >= min_index:
+                        break
+                    item = generate_random_item(floor, class_name)
+            self.items.append(item)
+        self.gold = int(random.randint(CHEST_GOLD_MIN, CHEST_GOLD_MAX) * (1.25 if self.chest_type == "rare" else 1.0))
 
     def open(self):
         self.opened = True
@@ -700,7 +725,11 @@ class Chest(Entity):
     def draw(self, brightness: float = 1.0) -> str:
         if self.opened:
             return "\x1b[38;2;100;100;100mx\x1b[0m"
-        return "\x1b[1m\x1b[38;2;255;215;0m=\x1b[0m"
+        glyphs = {"normal": "=", "rare": "◆", "trapped": "!", "mimic": "?"}
+        colors = {"normal": (255, 215, 0), "rare": (120, 190, 255),
+                  "trapped": (255, 120, 50), "mimic": (220, 80, 220)}
+        r, g, b = colors.get(self.chest_type, colors["normal"])
+        return f"\x1b[1m\x1b[38;2;{int(r * brightness)};{int(g * brightness)};{int(b * brightness)}m{glyphs.get(self.chest_type, '=')}\x1b[0m"
 
 
 # ============================================================

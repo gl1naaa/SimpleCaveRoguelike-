@@ -366,6 +366,24 @@ class CombatSystem:
 
     # ---- Player attacks ----
 
+    def player_basic_attack(self, player, target, now: float, damage_mult: float = 1.0) -> Optional[Tuple[int, bool]]:
+        """Perform one mana-free basic attack. The caller owns range checks."""
+        if not self.can_attack(now):
+            return None
+        self.attack_cooldown = now
+        atk = int(player.atk * max(0.1, damage_mult))
+        if self.has_effect(player, "buff"):
+            atk = int(atk * (1 + self.get_effect_power(player, "buff") / 100.0))
+        target_def = getattr(target, "defense", 0)
+        miss_chance = max(0.02, 0.10 - player.level * 0.008)
+        dmg, crit = self._calc_damage(atk, target_def, player.crit_chance, miss_chance)
+        if dmg == 0:
+            self._add_popup(target.x, target.y, "MISS", "200,200,200")
+            return 0, False
+        target.take_damage(dmg)
+        self._add_popup(target.x, target.y, f"-{dmg}", "255,255,100" if crit else "255,200,200")
+        return dmg, crit
+
     def player_attack_monster(self, player, monster, now: float, skill=None) -> Optional[Tuple[int, bool]]:
         if not self.can_attack(now):
             return None

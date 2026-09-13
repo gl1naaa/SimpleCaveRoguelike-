@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "simple-cave-roguelike"
-version = "2.1.0"
+version = "2.1.1"
 description = "A terminal roguelike dungeon crawler"
 requires-python = ">=3.10"
 dependencies = []
